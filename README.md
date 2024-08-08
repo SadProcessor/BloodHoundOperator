@@ -47,7 +47,7 @@ BHSession | ft
 ```
 
 ## Running Cmdlets
-List BloodHoundOperator Cmdlets
+List BloodHoundOperator Cmdlets, or check [OperatorCheat.md](OperatorCheat.md)
 ```PowerShell
 # Cmdlet Cheat
 BHHelp
