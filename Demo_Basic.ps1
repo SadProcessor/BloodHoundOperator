@@ -20,6 +20,7 @@ Invoke-BHComposer Up
 ############################################### Connect
 $BHTokenID = Get-Clipboard
 $BHTokenKey = Get-Clipboard | ConvertTo-SecureString -AsPlainText -Force
+
 ## New Session
 New-BHSession -TokenID $BHTokenID -Token $BHTokenKey
 
