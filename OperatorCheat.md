@@ -74,8 +74,11 @@
     - [Get-BHPathFinding](#get-bhpathfinding)
     - [Start-BHPathFinding](#start-bhpathfinding)
     - [Get-BHPathQuery](#get-bhpathquery)
+    - [Invoke-BHPathQuery](#invoke-bhpathquery)
     - [New-BHPathQuery](#new-bhpathquery)
     - [Remove-BHPathQuery](#remove-bhpathquery)
+    - [Set-BHPathQuery](#set-bhpathquery)
+    - [Set-BHPathQueryPermission](#set-bhpathquerypermission)
 - [BHClient](#bhclient)
     - [Get-BHClient](#get-bhclient)
     - [New-BHClient](#new-bhclient)
@@ -299,7 +302,9 @@ New BloodHound API Session
 #### **Syntax:**
 
 ```PowerShell
-New-BHSession [-TokenID] <string> [-Token] <securestring> [[-Server] <string>] [[-Port] <string>] [[-Protocol] <string>] [-CypherClip]
+New-BHSession [-JWT] <string> [-Server <string>] [-Port <string>] [-Protocol <string>] [-CypherClip] 
+
+New-BHSession -TokenID <string> -Token <securestring> [-Server <string>] [-Port <string>] [-Protocol <string>] [-CypherClip]
 ```
 
 #### **Examples:**
@@ -326,6 +331,13 @@ PS > New-BHSession -Server $Instance -TokenID $TokenID -Token $TokenKey
 
 Create a BHE session.
 - $TokenKey must be secure string.
+
+
+-------------------------- EXAMPLE 4 --------------------------
+
+PS > New-BHSession -JWT $JWT [-Server $Instance]
+
+Create Session with JWT
 
 ```
 
@@ -1933,6 +1945,16 @@ BHNode User -id <id>
 
 PS > BHNode -Search User alice
 
+
+-------------------------- EXAMPLE 3 --------------------------
+
+PS > bhnode -search user yoda -list controllers
+
+
+-------------------------- EXAMPLE 4 --------------------------
+
+PS > bhnode -search user yoda -list controllers -AsPath [-Cypher] # EXPERIMENTAL - DO NOT TRUST OUTPUT
+
 ```
 
 See `Help BHNode` for more info
@@ -2238,11 +2260,11 @@ Get BloodHound Path
 #### **Syntax:**
 
 ```PowerShell
-Get-BHPath [-Query] <string> [-Cypher] [-NoConvert] [-Expand <string>] 
+Get-BHPath [-Query] <string> [-Cypher] [-NoConvert] [-Minimal] [-Expand <string>] 
 
-Get-BHPath -TargetID <string[]> [-All] [-Shortest] [-SourceID <string[]>] [-Edge <string[]>] [-Hop <string>] [-SourceWhere <string>] [-TargetWhere <string>] [-PathWhere <string>] [-Return <string>] [-OrderBy <string>] [-Limit <int>] [-Cypher] [-NoConvert] [-Expand <string>] 
+Get-BHPath -TargetID <string[]> [-All] [-Shortest] [-SourceID <string[]>] [-Edge <string[]>] [-Hop <string>] [-SourceWhere <string>] [-TargetWhere <string>] [-PathWhere <string>] [-Return <string>] [-OrderBy <string>] [-Limit <int>] [-Cypher] [-NoConvert] [-Minimal] [-Expand <string>] 
 
-Get-BHPath [-All] [-Shortest] [-Source <string>] [-Target <string>] [-Edge <string[]>] [-Hop <string>] [-SourceWhere <string>] [-TargetWhere <string>] [-PathWhere <string>] [-Return <string>] [-OrderBy <string>] [-Limit <int>] [-Cypher] [-NoConvert] [-Expand <string>]
+Get-BHPath [-All] [-Shortest] [-Source <string>] [-Target <string>] [-Edge <string[]>] [-Hop <string>] [-SourceWhere <string>] [-TargetWhere <string>] [-PathWhere <string>] [-Return <string>] [-OrderBy <string>] [-Limit <int>] [-Cypher] [-NoConvert] [-Minimal] [-Expand <string>]
 ```
 
 #### **Examples:**
@@ -2513,12 +2535,18 @@ See `Help BHPathAnalysis` for more info
 
 **Alias**: `BHQuery`
 
-Get BloodHound Path Query
+Get BloodHound Query
 
 #### **Syntax:**
 
 ```PowerShell
-Get-BHPathQuery [[-ID] <int[]>]
+Get-BHPathQuery [[-ID] <string[]>] [-Expand <string>] 
+
+Get-BHPathQuery -Name <string[]> [-Expand <string>] 
+
+Get-BHPathQuery -Scope <string> [-Expand <string>] 
+
+Get-BHPathQuery -Description <string[]> [-Expand <string>]
 ```
 
 #### **Examples:**
@@ -2527,6 +2555,26 @@ Get-BHPathQuery [[-ID] <int[]>]
 -------------------------- EXAMPLE 1 --------------------------
 
 PS > BHQuery
+
+
+-------------------------- EXAMPLE 2 --------------------------
+
+PS > BHQuery -ID 123
+
+
+-------------------------- EXAMPLE 3 --------------------------
+
+PS > BHQuery -name MyQuery
+
+
+-------------------------- EXAMPLE 4 --------------------------
+
+BHQuery -description <keyword>
+
+
+-------------------------- EXAMPLE 5 --------------------------
+
+BHQuery -scope <shared|public>
 
 ```
 
@@ -2544,16 +2592,16 @@ See `Help BHQuery` for more info
 
 ---
 
-### **New-BHPathQuery**
+### **Invoke-BHPathQuery**
 
-**Alias**: `New-BHQuery`
+**Alias**: `BHInvoke`
 
-New BloodHound Saved Query
+Invoke BloodHound Query
 
 #### **Syntax:**
 
 ```PowerShell
-New-BHPathQuery [-Name] <string> [-Query] <string>
+Invoke-BHPathQuery [-Query] <string> [[-Description] <string>] [[-Name] <string>] [[-ID] <string>] [[-Expand] <string>] [[-Select] <string[]>] [-Minimal]
 ```
 
 #### **Examples:**
@@ -2561,7 +2609,52 @@ New-BHPathQuery [-Name] <string> [-Query] <string>
 ```PowerShell
 -------------------------- EXAMPLE 1 --------------------------
 
-PS > New-BHPathQuery -Name testQuery -Query "MATCH (x) RETURN x LIMIT 1"
+PS > Invoke-BHQuery "MATCH (x:User) RETURN x LIMIT 1"
+
+
+-------------------------- EXAMPLE 2 --------------------------
+
+PS > Invoke-BHQuery "api/version"
+
+
+-------------------------- EXAMPLE 3 --------------------------
+
+PS > BHQuery -ID 123 | BHInvoke
+
+```
+
+See `Help BHInvoke` for more info
+
+</br>
+
+</br>
+
+
+[BackToTop](#table-of-content)
+
+
+</br>
+
+---
+
+### **New-BHPathQuery**
+
+**Alias**: `New-BHQuery`
+
+New BloodHound Query
+
+#### **Syntax:**
+
+```PowerShell
+New-BHPathQuery [-Name] <string> [[-Description] <string>] [-Query] <string> [-PassThru]
+```
+
+#### **Examples:**
+
+```PowerShell
+-------------------------- EXAMPLE 1 --------------------------
+
+PS > New-BHPathQuery -Name MySavedQuery -Query "MATCH (x:User) RETURN x LIMIT 1" -Desc "My Saved Query"
 
 ```
 
@@ -2601,6 +2694,95 @@ Remove-BHPathQuery -id <QueryID>-Force
 ```
 
 See `Help Remove-BHQuery` for more info
+
+</br>
+
+</br>
+
+
+[BackToTop](#table-of-content)
+
+
+</br>
+
+---
+
+### **Set-BHPathQuery**
+
+**Alias**: `Set-BHQuery`
+
+Set BloodHound Query
+
+#### **Syntax:**
+
+```PowerShell
+Set-BHPathQuery [-ID] <int> [[-Name] <string>] [[-Query] <string>] [[-Description] <string>]
+```
+
+#### **Examples:**
+
+```PowerShell
+-------------------------- EXAMPLE 1 --------------------------
+
+PS > Set-BHPathQuery -ID 123 -Name MySavedQuery
+
+```
+
+See `Help Set-BHQuery` for more info
+
+</br>
+
+</br>
+
+
+[BackToTop](#table-of-content)
+
+
+</br>
+
+---
+
+### **Set-BHPathQueryPermission**
+
+**Alias**: `Set-BHQueryPermission`
+
+Set BloodHound Query Permissions
+
+#### **Syntax:**
+
+```PowerShell
+Set-BHPathQueryPermission [-ID] <int> -Public 
+
+Set-BHPathQueryPermission [-ID] <int> -Private 
+
+Set-BHPathQueryPermission [-ID] <int> -Share <string[]> [-Remove]
+```
+
+#### **Examples:**
+
+```PowerShell
+-------------------------- EXAMPLE 1 --------------------------
+
+PS > Set-BHQueryPermission -ID 123 -Public
+
+
+-------------------------- EXAMPLE 2 --------------------------
+
+PS > Set-BHQueryPermission -ID 123 -Private
+
+
+-------------------------- EXAMPLE 3 --------------------------
+
+Set-BHQueryPermission -ID 123 -Share <UserID[]>
+
+
+-------------------------- EXAMPLE 4 --------------------------
+
+Set-BHQueryPermission -ID 123 -Share <UserID[]>-Remove
+
+```
+
+See `Help Set-BHQueryPermission` for more info
 
 </br>
 
@@ -3042,6 +3224,6 @@ See `Help Set-BHEvent` for more info
 
 </br>
 
-Sunday, August 4, 2024 09:23:07 PM
+Wednesday, September 11, 2024 3:20:06 PM
 
 

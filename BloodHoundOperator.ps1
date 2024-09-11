@@ -1,6 +1,8 @@
-## BlooDHoundOperator
-# Sunday, August 4, 2024 9:23:37 PM
+## BloodHoundOperator
+# Wednesday, September 11, 2024 1:23:21 PM
 
+
+#################################################### BHComposer
 ## BloodHound Operator - BHComposer (BHCE Only)
 # New-BHComposer
 # Invoke-BHComposer
@@ -269,17 +271,6 @@ function Invoke-BHAPI{
 
 
 <#
-.Synopsis
-    Invoke BloodHound API call
-.DESCRIPTION
-    Invoke-RestMethod to Bloodhound API against BHSession
-.EXAMPLE
-    Invoke-BHAPI /api/version | Select-Object -ExpandProperty data | Select-Object -ExpandProperty server_version
-.EXAMPLE
-    bhapi api/version -expand data.server_version
-.EXAMPLE
-    BHAPI bloodhound-users POST $Json
-#>
 function Invoke-BHAPI{
     [Alias('BHAPI')]
     param(
@@ -333,7 +324,7 @@ function Invoke-BHAPI{
                 Signature     = $Sign
                 RequestDate   = $Timestamp
                 }
-            if($Timeout){$Headers.add('Prefer',$Timeout)}
+            if($Timeout -ne $Null){$Headers.add('Prefer',$Timeout)}
             # Verbose
             Write-verbose "[BH] $Method $URI"
             if($Body){Write-Verbose "$Body"}
@@ -360,7 +351,106 @@ function Invoke-BHAPI{
     end{}###
     }
 #End
+#>
 
+<#
+.Synopsis
+    Invoke BloodHound API call
+.DESCRIPTION
+    Invoke-RestMethod to Bloodhound API against BHSession
+.EXAMPLE
+    Invoke-BHAPI /api/version | Select-Object -ExpandProperty data | Select-Object -ExpandProperty server_version
+.EXAMPLE
+    bhapi api/version -expand data.server_version
+.EXAMPLE
+    BHAPI bloodhound-users POST $Json
+#>
+function Invoke-BHAPI{
+    [Alias('BHAPI')]
+    param(
+        # URI
+        [Parameter(Mandatory=1)][String]$URI,
+        # Method
+        [ValidateSet('GET','POST','PATCH','PUT','DELETE')]
+        [Parameter(Mandatory=0)][String]$Method='GET',
+        # Body
+        [Parameter(Mandatory=0)][String]$Body,
+        # FIlters
+        [Parameter(Mandatory=0)][String[]]$Filter,
+        # Session
+        [Parameter(Mandatory=0)][int[]]$SessionID=($BHSession | ? x).id,
+        # Timeout
+        [Parameter(Mandatory=0)][Alias('Prefer')][int]$Timeout,
+        # Expand
+        [Parameter(Mandatory=0)][Alias('Dot')][String]$Expand
+        )
+    begin{
+        if(-Not$SessionID){Write-Warning "No BHSession found: Use New-BHSession [Help New-BHSession]";Break}
+        if($URI -match "^/"){$URI=$URI.trimstart('/')}
+        if($URI -notmatch "^api/"){$URI='api/v2/'+$URI}
+        if($filter){$qFilter = '?'+$($Filter.replace(' ','+')-join'&')
+            $qfilter=[uri]::EscapeUriString($qFilter)
+            $URI=$URI+$qfilter
+            }
+        }
+    process{foreach($SessID in $SessionID){
+            # Session
+            $Session   = $BHSession | ? ID -eq $SessID
+            $Proto     = $Session.Protocol
+            $Server    = $Session.Server
+            $Port      = $Session.Port
+            if(-Not$TimeOut){$Timeout=($BHSession | ? id -eq $SessID).timeout}
+            ## TokenID/TokenKey
+            if($Session.tokenID -ne 'JWT'){
+                $TokenID   = $Session.TokenID
+                $TokenKey  = $Session.Token | Read-SecureString
+                # Signature
+                $Timestamp = [Datetime]::utcnow.tostring('o')
+                $KeyByte   = [Text.Encoding]::UTF8.GetBytes($TokenKey)
+                $OpByte    = [Text.Encoding]::UTF8.GetBytes("$Method/$URI")
+                $DateByte  = [Text.Encoding]::UTF8.GetBytes(-join $Timestamp[0..12])
+                $BodyByte  = [Text.Encoding]::UTF8.GetBytes("$Body")
+                $HMAC      = [Security.Cryptography.HMACSHA256]::new($KeyByte).ComputeHash($OpByte)
+                $HMAC      = [Security.Cryptography.HMACSHA256]::new($HMAC).ComputeHash($DateByte)
+                $HMAC      = [Security.Cryptography.HMACSHA256]::new($HMAC).ComputeHash($BodyByte)
+                $Sign      = [Convert]::ToBase64String($HMAC)
+                # Headers
+                $Headers = @{
+                    Authorization = "BHESignature $TokenID"
+                    Signature     = $Sign
+                    RequestDate   = $Timestamp
+                    }}
+            ## JWT
+            else{$Headers = @{
+                Authorization = "Bearer $($Session.Token)"
+                }}
+            if($Timeout -ne $Null){$Headers.add('Prefer',$Timeout)}
+            # Verbose
+            Write-verbose "[BH] $Method $URI"
+            if($Body){Write-Verbose "$Body"}
+            # Params
+            if($Port){$Server="${server}:${Port}"}
+            $Params = @{
+                Uri         = "${Proto}://${Server}/${URI}"
+                ContentType = if($Method -eq 'POST' -AND $uri -match "saml/providers$"){'multipart/form-data'}else{'application/json'}
+                Method      = $Method
+                Headers     = $Headers
+                UserAgent   = 'PowerShell BloodHound Operator'
+                }
+            # Body
+            if($Body){$Params.Add('Body',"$Body")}
+            # Call
+            try{$Reply = Invoke-RestMethod @Params -verbose:$false -UseBasicParsing}catch{Get-ErrorWarning;Break}
+            # Output
+            if($Expand){foreach($Dot in $Expand.split('.')){try{$Reply=$Reply.$Dot}Catch{}}}
+            if(($BHSession|? x).count -gt 1 -AND $reply.gettype().name -ne 'string'){$Reply|%{
+                $_|Add-Member -MemberType NoteProperty -Name SessionID -Value $SessID -PassThru | select SessionID,* -ea 0
+                }}
+            else{$Reply}
+            }}
+    end{}###
+    }
+#End
 
 ## BloodHound Operator - BHSession
 # New-BHSession
@@ -455,7 +545,7 @@ function New-BHSession{
         Role       = 'tbd'
         Edition    = 'tbd'
         Version    = 'tbd'
-        Timeout    = 30
+        Timeout    = 0
         Limit      = 1000
         CypherClip = [Bool]$PSCmdlet.MyInvocation.BoundParameters.CypherClip.IsPresent
         TokenID    = $TokenID
@@ -504,6 +594,118 @@ function Remove-BHSession{
     }
 #End
 
+
+<#
+.SYNOPSIS
+    New BloodHound API Session
+.DESCRIPTION
+    New BloodHound API Session
+.EXAMPLE
+    $TokenKey = Get-Clipboard | Convertto-SecureString -AsPlainText -Force
+    
+    Convert plaintext token key from clipboard to secure string variable
+.EXAMPLE
+    New-BHSession -TokenID $TokenID -Token $TokenKey
+    
+    Create a BHCE session (localhost:8080). 
+    - $TokenKey must be secure string.
+.EXAMPLE
+    New-BHSession -Server $Instance -TokenID $TokenID -Token $TokenKey
+    
+    Create a BHE session. 
+    - $TokenKey must be secure string.
+.EXAMPLE
+    New-BHSession -JWT $JWT [-Server $Instance]
+    
+    Create Session with JWT
+#>
+function New-BHSession{
+    [CmdletBinding(DefaultParameterSetName='JWT')]
+    Param(
+        # TokenID
+        [Parameter(Mandatory=1,ParameterSetName='Token')][String]$TokenID,
+        # Token
+        [Parameter(Mandatory=1,ParameterSetName='Token')][Security.SecureString]$Token,
+        # JWT
+        [Parameter(Mandatory=1,Position=0,ParameterSetName='JWT')][String]$JWT,
+        # Server
+        [Parameter(Mandatory=0)][String]$Server='127.0.0.1',
+        # Port
+        [Parameter(Mandatory=0)][String]$Port,
+        # Proto
+        [Parameter(Mandatory=0)][String]$Protocol,
+        # CypherClip
+        [Parameter(Mandatory=0)][Switch]$CypherClip
+        )
+    # ASCII
+    $ASCII= @("
+    _____________________________________________
+    _______|_____________________________________
+    ______||_________________BloodHoundOperator__
+    ______||-________...___________________BETA__
+    _______||-__--||||||||-._____________________
+    ________!||||||||||||||||||--________________
+    _________|||||||||||||||||||||-______________
+    _________!||||||||||||||||||||||.____________
+    ________.||||||!!||||||||||||||||-___________
+    _______|||!||||___||||||||||||||||.__________
+    ______|||_.||!___.|||'_!||_'||||||!._________
+    _____||___!||____|||____||___|||||.__________
+    ______||___||_____||_____||!__!|||'__________
+    ___________ ||!____||!_______________________
+    _____________________________________________
+   
+    BloodHound Dog Whisperer - @SadProcessor 2024
+")  
+    # Port & Proto
+    if($Server -match "127.0.0.1|localhost" -AND -Not$Port){$Port='8080'}
+    if($Server -match "127.0.0.1|localhost" -AND -Not$Protocol){$Protocol='http'}
+    if($Server -ne 'localhost' -AND -Not$Protocol){$Protocol='https'}
+    # BHFilter
+    if(-Not$BHFilter){$Script:BHFilter = Get-BHPathFilter -ListAll | Select Platform,Group,@{n='x';e={'x'} },Edge}
+    # BHSession
+    if(-Not$BHSession){Write-Host $ASCII -ForegroundColor Blue; $Script:BHSession=[Collections.ArrayList]@()}
+    # Unselect all
+    $BHSession|? x|%{$_.x=''}
+    # Session ID
+    $SessionID = ($BHSession.id | sort-object | Select-Object -Last 1)+1 
+    # New Session
+    $NewSession = [PSCustomObject]@{
+        x          = 'x'
+        ID         = $SessionID
+        Protocol   = $Protocol
+        Server     = $Server
+        Port       = $Port
+        Operator   = 'tbd'
+        Role       = 'tbd'
+        Edition    = 'tbd'
+        Version    = 'tbd'
+        Timeout    = 0
+        Limit      = 1000
+        CypherClip = [Bool]$PSCmdlet.MyInvocation.BoundParameters.CypherClip.IsPresent
+        TokenID    = if($JWT){'JWT'}else{$TokenID}
+        Token      = if($JWT){$JWT}else{$Token}
+        }
+    # Add New Session
+    $Null = $BHSession.add($NewSession)
+    # Version
+    $vers = BHAPI 'api/version' -Expand 'data.server_version' -SessionID $SessionID -verbose:$False
+    if(-Not$Vers){
+    #($Script:BHSession | ? x).Version = Try{BHAPI 'api/version' -Expand 'data.server_version' -SessionID $SessionID -verbose:$False}Catch{
+        #$BHSession.Remove($NewSession)
+        Write-Warning "Invalid Session Token - No Session Selected"
+        RETURN 
+        }
+    else{($Script:BHSession | ? x).Version = $Vers}
+    # Operator
+    ($Script:BHSession | ? x).Operator = (BHAPI "api/v2/self" -Expand 'data.principal_name' -SessionID $SessionID -verbose:$False)
+    # Role
+    ($Script:BHSession | ? x).Role = (BHAPI "api/v2/self" -Expand 'data.roles' -SessionID $SessionID -verbose:$False).name
+    # Edition
+    $BHEdition = if($NewSession.server -match "\.bloodhoundenterprise\.io$"){'BHE'}else{'BHCE'}
+    ($Script:BHSession | ? x).Edition = $BHEdition 
+    }
+#End
 
 
 ################################################ Select-BHSession
@@ -576,8 +778,8 @@ Function Set-BHSession{
         [Parameter()][Switch]$NoClip
         )
     if($Limit){$BHSession|? x |%{$_.Limit=$Limit}}
-    if($Timeout){
-        if($Timeout -eq 0){$Timeout=30}
+    if($PSCmdlet.MyInvocation.BoundParameters.ContainsKey("Timeout")){
+        #if($Timeout -eq 0){$Timeout=30}
         $BHSession|? x|%{$_.Timeout=$Timeout}
         }
     if($NoClip){($BHSession|? x).CypherClip=$False}
@@ -1840,6 +2042,7 @@ enum BHEntityType{
     AZSubscription
     AZResourceGroup
     AZVM
+    AZVMScaleSet
     AZAutomationAccount
     AZLogicApp
     AZFunctionApp
@@ -1847,7 +2050,7 @@ enum BHEntityType{
     AZResourceNode
     AZContainerRegistry
     AZKeyVault
-    AZWebsite
+    AZWebApp
     # AAD
     AZApp
     AZServicePrincipal
@@ -1919,7 +2122,6 @@ function Search-BHNode{
 
 
 
-
 ################################################ Get-BHNode
 
 <#
@@ -1931,7 +2133,7 @@ function Search-BHNode{
     BHNode User -id <id>
 .EXAMPLE
     BHNode -Search User alice
-#>
+#><#
 function Get-BHNode{
     [Alias('BHNode')]
         Param(
@@ -1952,14 +2154,14 @@ function Get-BHNode{
         # Prep DynNamelist
         $DynList = Switch -regex ($Label){
             # AD
-            ^Base$     {'Controllables'}
-            ^Container$ {'Controllers'}
-            ^Computer$ {'AdminRights','AdminUsers','ConstrainedDelegationRights','ConstrainedUsers','Controllables','Controllers','DCOMRights','DCOMUsers','GroupMemberships','PSRemoteRights','PSRemoteUsers','RDPRights','Sessions','SQLAdmins'}
-            ^Domain$   {'Computers','Controllers','DCSyncers','ForeignAdmins','ForeignGPOControllers','ForeignGroups','ForeignUsers','GPOs','Groups','IndoundTrusts','LinkedGPOs','OUs','OutboundTrusts','Users'}
-            ^GPO$      {'Computers','Containers','Controllers','OUs','TierZero','Users'}
-            ^Group$    {'AdminRights','Controllables','Controllers','DCMRights','Members','Memberships','PSRemoteRights','RDPRights','Sessions'}
-            ^OU$       {'Computers','GPOs','Groups','Users'}
-            ^User$     {'AdminRights','ConstrainedDelegationRights','Controllables','Controllers','DCOMRights','Memberships','PSRemoteRights','RDPRights','Sessions','SQLAdminRights'}
+            ^Base$          {'Controllables'}
+            ^Container$     {'Controllers'}
+            ^Computer$      {'AdminRights','AdminUsers','ConstrainedDelegationRights','ConstrainedUsers','Controllables','Controllers','DCOMRights','DCOMUsers','GroupMemberships','PSRemoteRights','PSRemoteUsers','RDPRights','Sessions','SQLAdmins'}
+            ^Domain$        {'Computers','Controllers','DCSyncers','ForeignAdmins','ForeignGPOControllers','ForeignGroups','ForeignUsers','GPOs','Groups','IndoundTrusts','LinkedGPOs','OUs','OutboundTrusts','Users'}
+            ^GPO$           {'Computers','Containers','Controllers','OUs','TierZero','Users'}
+            ^Group$         {'AdminRights','Controllables','Controllers','DCMRights','Members','Memberships','PSRemoteRights','RDPRights','Sessions'}
+            ^OU$            {'Computers','GPOs','Groups','Users'}
+            ^User$          {'AdminRights','ConstrainedDelegationRights','Controllables','Controllers','DCOMRights','Memberships','PSRemoteRights','RDPRights','Sessions','SQLAdminRights'}
             # ADCS
             ^AIACA$        {'Controllers'}
             ^CertTemplate$ {'Controllers'}
@@ -1967,27 +2169,98 @@ function Get-BHNode{
             ^NTAuthStore$  {'Controllers'}
             ^RootCA$       {'Controllers'}
             # AZ <-------------------------------------- ToDo: List Items
-            ^AZBase$ {'ToDo'}
-            ^AZTenant$ {'AADUsers','AADGroups','AADAppRegistrations','AADServicePrincipals','AADDevices','InboundControl'}
-            ^AZManagementGroup$ {'ToDo'}
-            ^AZSubscription$ {'ToDo'}
-            ^AZResourceGroup$ {'ToDo'}
-            ^AZVM$ {'ToDo'}
-            ^AZAutomationAccount$ {'ToDo'}
-            ^AZLogicApp$ {'ToDo'}
-            ^AZFunctionApp$ {'ToDo'}
-            ^AZWebsite$ {'ToDo'}
-            ^AZKeyVault$ {'ToDo'}
-            ^AZManagedCluster$ {'ToDo'}
-            ^AZVMScaleSet$ {'ToDo'}
-            ^AZContainerRegistry$ {'ToDo'}
+            ^AZBase$ {'InboundControl'}
+            ^AZTenant$ {
+                'Users',
+                'Groups',
+                'ManagementGroups',
+                'Subscriptions',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'
+                }
+            ^AZManagementGroup$ {
+                'Users',
+                'Groups',
+                'ManagementGroups',
+                'Subscriptions',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'
+                }
+            ^AZSubscription$ {
+                'Users',
+                'Groups',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'
+                }
+            ^AZResourceGroup$ {
+                'Users',
+                'Groups',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'}
+            ^AZVM$                  {'LocalAdmin','InboundControl'}
+            ^AZAutomationAccount$   {'InboundControl'}
+            ^AZLogicApp$            {'InboundControl'}
+            ^AZFunctionApp$         {'InboundControl'}
+            ^AZWebApp$              {'InboundControl'}
+            ^AZKeyVault$            {'InboundControl','KeyReaders','CertificateReaders','SecretReaders',,'AllReaders'}
+            ^AZManagedCluster$      {'InboundControl'}
+            ^AZVMScaleSet$          {'InboundControl'}
+            ^AZContainerRegistry$   {'InboundControl'}
             # AZ AAD
-            ^AZRole$   {'ActiveAssignments'}
-            ^AZUser$ {'ToDo'}
-            ^AZGroup$ {'ToDo'}
-            ^AZServicePrincipal$ {'ToDo'}
-            ^AZApp$ {'ToDo'}
-            ^AZDevice$ {'ToDo'}
+            ^AZRole$                {'ActiveAssignments'}
+            ^AZUser$                {'MemberOf','Roles','ExecutionPrivileges','OutboundControl','InboundControl'}
+            ^AZGroup$               {'Members','MemberOf','Roles','InboundControl','OutboundControl'}
+            ^AZServicePrincipal$    {'Roles','InboundControl','OutboundControl','InboundAppRole','OutboundAppRole'}
+            ^AZApp$                 {'InboundControl'}
+            ^AZDevice$              {'LocalAdmin','InboundControl'}
             #Default{}
             }
         # Prep DynP
@@ -1997,7 +2270,7 @@ function Get-BHNode{
         # Return Dico
         Return $Dico
         }
-    Begin{Foreach($SessID in $SessionID){if($Search){foreach($Key in $Keyword){Search-BHNode $Label $Key -SessionID $SessID |%{
+    Begin{Foreach($SessID in $SessionID){if($Search){foreach($Key in $Keyword){Search-BHNode $Label $Key -SessionID $SessID -limit $Limit |%{
             if($DynP.Value){$_|Get-BHNode $Label -List $DynP.Value -Expand $Expand -AsPath:$ASPath -Cypher:$Cypher -limit $Limit -PropOnly:$PropOnly -SessionID $SessID}
             else{$_|Get-BHNode $Label -Expand $Expand -AsPath:$ASPath -Cypher:$Cypher -limit $Limit -PropOnly:$PropOnly -SessionID $SessID}
             }}}}}
@@ -2020,20 +2293,27 @@ function Get-BHNode{
             ^RootCA$       {"api/v2/rootcas/$ObjID"}
             # AZ
             ^AZ {$lbl = Switch($label){
-                    AZApp {'applications'}
-                    AZManagementGroup{'management-groups'}
-                    AZResourceGroup{'resource-groups'}
-                    AZServicePrincipal{'service-principals'}
+                    AZBase                  {'az-base'}
+                    AZApp                   {'applications'}
+                    AZAutomationAccount     {'automation-accounts'}
+                    AZContainerRegistry     {'container-registries'}
+                    AZFunctionApp           {'function-apps'}
+                    AZKeyVault              {'key-vaults'}
+                    AZLogicApp              {'logic-apps'}
+                    AZManagementGroup       {'management-groups'}
+                    AZManagedCluster        {'managed-clusters'}
+                    AZResourceGroup         {'resource-groups'}
+                    AZServicePrincipal      {'service-principals'}
+                    AZVMScaleSet            {'vm-scale-sets'}
+                    AZWebApp                {'web-apps'}
                     Default{"$("$label".tolower()-replace"^az")s"}
                     }
                 "api/v2/azure/${lbl}?object_id=$($ObjID-replace"/",'%2F')"
                 }
-            #^AZ        {"api/v2/azure/$("$label".tolower()-replace"^az")s?object_id=$($ObjID-replace"/",'%2F')"}
-            #^AZ        {"api/v2/azure/tenants?object_id=$ObjID"}# <------------ /!\ API Broken?
-            Default    {"api/v2/base/$ObjID"}
+            Default{"api/v2/base/$ObjID"}
             }
         $URL += Switch($DynP.value){
-            # AD
+            # AD+
             AdminRights                  {'/admin-rights'}
             AdminUsers                   {'/admin-users'}
             Computers                    {'/computers'}
@@ -2043,17 +2323,17 @@ function Get-BHNode{
             Controllers                  {'/controllers'}
             DCOMRights                   {'/dcom-rights'}
             DCOMUsers                    {'/dcom-users'}
-            DCSyncers                    {'/dcsyncers'}
+            DCSyncers                    {'/dc-syncers'}
             ForeignAdmins                {'/foregin-admins'}
             ForeignGPOControllers        {'/foregin-gpo-contollers'}
             ForeignGroups                {'/foreign-groups'}
             ForeignUsers                 {'/foreign-users'}
             GPOs                         {'/gpo'}
             GroupMemberships             {'/group-memberships'}
-            Groups                       {'/groups'}
+            Groups                       {$(if($Label -match '^AZ'){'&related_entity_type=descendent-groups'}else{'/groups'})}
             IndoundTrusts                {'/indbound-trusts'}
             LinkedGPOs                   {'/linked-gpos'}
-            Members                      {'/members'}
+            Members                      {$(if($Label -match '^AZ'){'&related_entity_type=group-members'}else{'/members'})}
             Memberships                  {'/memberships'}
             OUs                          {'/ous'}
             OutboundTrusts               {'/outboud-trusts'}
@@ -2065,13 +2345,12 @@ function Get-BHNode{
             SQLAdminRights               {'/sql-admin-rights'}
             SQLAdmins                    {'/sql-admins'}
             TierZero                     {'/tier-zero'}
-            Users                        {'/users'}
-            # AZ
-            AADUsers                     {'&related_entity_type=descendent-users'}
-            AADGroups                    {'&related_entity_type=descendent-groups'}
-            AADAppRegistrations          {'&related_entity_type=descendent-applications'}
-            AADServicePrincipals         {'&related_entity_type=descendent-service-principals'}
-            AADDevices                   {'&related_entity_type=descendent-devices'}
+            Users                        {$(if($Label -match '^AZ'){'&related_entity_type=descendent-users'}else{'/users'})}
+            ## AZ
+            # Descendents
+            AppRegistrations             {'&related_entity_type=descendent-applications'}
+            ServicePrincipals            {'&related_entity_type=descendent-service-principals'}
+            Devices                      {'&related_entity_type=descendent-devices'}
             ManagementGroups             {'&related_entity_type=descendent-management-groups'}
             Subscriptions                {'&related_entity_type=descendent-subscriptions'}
             ResourceGroups               {'&related_entity_type=descendent-resource-groups'}
@@ -2084,34 +2363,48 @@ function Get-BHNode{
             LogicApps                    {'&related_entity_type=descendent-logic-apps'}
             WebApps                      {'&related_entity_type=descendent-web-apps'}
             KeyVaults                    {'&related_entity_type=descendent-key-vaults'}
+            # Other
             InboundControl               {'&related_entity_type=inbound-control'}
-            ActiveAssignments            {'&related_entity_type=active-assignments'}   
+            OutboundControl              {'&related_entity_type=outbound-control'}
+            ActiveAssignments            {'&related_entity_type=active-assignments'}
+            Roles                        {'&related_entity_type=roles'}
+            MemberOf                     {'&related_entity_type=group-membership'}
+            ExecutionPrivileges          {'&related_entity_type=outbound-execution-privileges'}
+            InboundAppRole               {'&related_entity_type=inbound-abusable-app-role-asignments'} # /!\ Not Tested
+            OutboundAppRole              {'&related_entity_type=outbound-abusable-app-role-asignments'} # /!\ Not Tested
+            LocalAdmins                  {'&related_entity_type=inbound-execution-privileges'} # /!\ Not Tested
+            #PimAssignments               {}<------------- /!\ Check
             Default                      {}
             }
         $URL+=if($URL -match 'azure'){"&limit=$Limit"}else{"?limit=$Limit"}
+        if($PropOnly){$URL+="&counts=false"}
         $Obj = Invoke-BHAPI $URL -expand $Expand -SessionID $SessID
         if($DynP.Value){if($Obj -AND $AsPath){
             Switch($DynP.Value){
                 AdminRights                  {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|AdminTo'}
                 AdminUsers                   {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf|AdminTo'}
                 Computers                    {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                ConstrainedDelegationRights  {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
+                ConstrainedDelegationRights  {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null} 
                 ConstrainedUsers             {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
                 Controllables                {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
                 Controllers                  {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
                 DCOMRights                   {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|ExecuteDCOM'}
                 DCOMUsers                    {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf|ExecuteDCOM'}
-                DCSyncers                    {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':CanDCSync|SyncLAPSPassword'}
+                DCSyncers                    {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':DCSync|SyncLAPSPassword'}
                 ForeignAdmins                {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
                 ForeignGPOControllers        {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
                 ForeignGroups                {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
                 ForeignUsers                 {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
                 GPOs                         {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
                 GroupMemberships             {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf'}
-                Groups                       {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
+                Groups                       {if($URL -match 'azure'){$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                                                else{$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
+                                                }
                 IndoundTrusts                {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':TrustedBy'}
                 LinkedGPOs                   {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':GPLink|Contains'}
-                Members                      {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf'}
+                Members                      {if($URL -match 'azure'){$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZMembers'}
+                                                else{$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf'}
+                                                }
                 Memberships                  {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf'}
                 OUs                          {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
                 OutboundTrusts               {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':TrustedBy'}
@@ -2123,8 +2416,41 @@ function Get-BHNode{
                 SQLAdminRights               {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|SQLAdmin'}
                 SQLAdmins                    {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf|SQLAdmin'}
                 TierZero                     {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                Users                        {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                Default                      {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
+                Users                        {if($URL -match 'azure'){$SrcID=$ObjID;$TgtID=$Null;$Fltr=':AZContains'}
+                                                else{$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
+                                                }
+                ## ToDo: Azure Related entities -AsPath <--------------------------------------------------- /!\
+                # Descendents
+                AppRegistrations             {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                ServicePrincipals            {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                Devices                      {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                ManagementGroups             {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                Subscriptions                {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                ResourceGroups               {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                AutomationAccounts           {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                VMs                          {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                ManagedClusters              {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                VMScaleSets                  {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                ContainerRegistries          {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                FunctionApps                 {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                LogicApps                    {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                WebApps                      {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                KeyVaults                    {$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                # Other
+                InboundControl               {}
+                OutboundControl              {}
+                ActiveAssignments            {}
+                Roles                        {}
+                MemberOf                     {}
+                ExecutionPrivileges          {}
+                InboundAppRole               {}
+                OutboundAppRole              {}
+                LocalAdmins                  {}
+                #PimAssignments              {}
+                Default                      {
+                    if($Url -match 'azure'){$SrcID=$ObjID;$TgtID=$Obj.props.ObjectID;$Fltr=':AZContains'}
+                    else{$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
+                    }
                 }
             $Query = (Get-BHPath -SourceId $SrcID -TargetID $TgtID -Edge $Fltr -limit $($null) -orderby "LENGTH(p)"-Cypher).trim()
             $Obj = if($Cypher){if(($BHSession|? x|Select -last 1).CypherClip){$Query| Set-Clipboard};RETURN $Query}else{
@@ -2132,18 +2458,32 @@ function Get-BHNode{
                 }
             #$Obj=$CypherQ
             }}
-        if($Obj){if($DynP.IsSet){$Obj}else{Format-BHNode $Obj -PropOnly:$PropOnly}}
+        if($Obj){if($DynP.IsSet){if($Obj.props -AND $Obj.kind -AND $PropOnly){$Obj.props}else{$Obj}}else{Format-BHNode $Obj -PropOnly:$PropOnly}}
         }}}
     End{}
     }
 #End
-   
+#>
+
 <#
+.SYNOPSIS
+    Get BloodHound Node
+.DESCRIPTION
+    Get BloodHound Node
+.EXAMPLE
+    BHNode User -id <id>
+.EXAMPLE
+    BHNode -Search User alice
+.EXAMPLE
+    bhnode -search user yoda -list controllers
+.EXAMPLE
+    bhnode -search user yoda -list controllers -AsPath [-Cypher] # EXPERIMENTAL - DO NOT TRUST OUTPUT
+#>
 function Get-BHNode{
     [Alias('BHNode')]
-     Param(
+        Param(
         [Parameter(Mandatory=1,Position=0,ParameterSetName='Search')]
-        [Parameter(Mandatory=0,Position=0,ParameterSetName='ByID')][Alias('Type')][BHEntityType]$Label,
+        [Parameter(Mandatory=0,Position=0,ValueFromPipelineByPropertyName,ParameterSetName='ByID')][Alias('Type')][BHEntityType]$Label,
         [Parameter(Mandatory=1,Position=1,ValueFromPipeline,ValueFromPipelineByPropertyName,ParameterSetName='ByID')][Alias('ID','object_id')][String[]]$ObjectID,
         [Parameter(Mandatory=1,ParameterSetName='Search')][Switch]$Search,
         [Parameter(Mandatory=0,Position=1,ParameterSetName='Search')][String[]]$Keyword='-',
@@ -2151,21 +2491,22 @@ function Get-BHNode{
         [Parameter(Mandatory=0)][String]$Expand='data',
         [Parameter(Mandatory=0)][Switch]$AsPath,
         [Parameter(Mandatory=0)][Int]$Limit=$($BHSession|? x|select -last 1).limit,
-        [Parameter(Mandatory=0)][Switch]$Cypher
+        [Parameter(Mandatory=0)][Switch]$Cypher,
+        [Parameter(Mandatory=0)][int[]]$SessionID=($BHSession|? x).id
         )
     DynamicParam{
         $Dico = New-Object Management.Automation.RuntimeDefinedParameterDictionary
         # Prep DynNamelist
         $DynList = Switch -regex ($Label){
             # AD
-            ^Base$     {'Controllables'}
-            ^Container$ {'Controllers'}
-            ^Computer$ {'AdminRights','AdminUsers','ConstrainedDelegationRights','ConstrainedUsers','Controllables','Controllers','DCOMRights','DCOMUsers','GroupMemberships','PSRemoteRights','PSRemoteUsers','RDPRights','Sessions','SQLAdmins'}
-            ^Domain$   {'Computers','Controllers','DCSyncers','ForeignAdmins','ForeignGPOControllers','ForeignGroups','ForeignUsers','GPOs','Groups','IndoundTrusts','LinkedGPOs','OUs','OutboundTrusts','Users'}
-            ^GPO$      {'Computers','Containers','Controllers','OUs','TierZero','Users'}
-            ^Group$    {'AdminRights','Controllables','Controllers','DCMRights','Members','Memberships','PSRemoteRights','RDPRights','Sessions'}
-            ^OU$       {'Computers','GPOs','Groups','Users'}
-            ^User$     {'AdminRights','ConstrainedDelegationRights','Controllables','Controllers','DCOMRights','Memberships','PSRemoteRights','RDPRights','Sessions','SQLAdminRights'}
+            ^Base$          {'Controllables'}
+            ^Container$     {'Controllers'}
+            ^Computer$      {'AdminRights','AdminUsers','ConstrainedDelegationRights','ConstrainedUsers','Controllables','Controllers','DCOMRights','DCOMUsers','GroupMemberships','PSRemoteRights','PSRemoteUsers','RDPRights','Sessions','SQLAdmins'}
+            ^Domain$        {'Computers','Controllers','DCSyncers','ForeignAdmins','ForeignGPOControllers','ForeignGroups','ForeignUsers','GPOs','Groups','IndoundTrusts','LinkedGPOs','OUs','OutboundTrusts','Users'<#,'TierZero'#>}
+            ^GPO$           {'Computers','Containers','Controllers','OUs','TierZero','Users'}
+            ^Group$         {'AdminRights','Controllables','Controllers','DCMRights','Members','Memberships','PSRemoteRights','RDPRights','Sessions'}
+            ^OU$            {'Computers','GPOs','Groups','Users'}
+            ^User$          {'AdminRights','ConstrainedDelegationRights','Controllables','Controllers','DCOMRights','Memberships','PSRemoteRights','RDPRights','Sessions','SQLAdminRights'}
             # ADCS
             ^AIACA$        {'Controllers'}
             ^CertTemplate$ {'Controllers'}
@@ -2173,27 +2514,98 @@ function Get-BHNode{
             ^NTAuthStore$  {'Controllers'}
             ^RootCA$       {'Controllers'}
             # AZ <-------------------------------------- ToDo: List Items
-            ^AZBase$ {'ToDo'}
-            ^AZTenant$ {'AADUsers','AADGroups','AADAppRegistrations','AADServicePrincipals','AADDevices','InboundControl'}
-            ^AZManagementGroup$ {'ToDo'}
-            ^AZSubscription$ {'ToDo'}
-            ^AZResourceGroup$ {'ToDo'}
-            ^AZVM$ {'ToDo'}
-            ^AZAutomationAccount$ {'ToDo'}
-            ^AZLogicApp$ {'ToDo'}
-            ^AZFunctionApp$ {'ToDo'}
-            ^AZWebsite$ {'ToDo'}
-            ^AZKeyVault$ {'ToDo'}
-            ^AZManagedCluster$ {'ToDo'}
-            ^AZVMScaleSet$ {'ToDo'}
-            ^AZContainerRegistry$ {'ToDo'}
+            ^AZBase$ {'InboundControl'}
+            ^AZTenant$ {
+                'Users',
+                'Groups',
+                'ManagementGroups',
+                'Subscriptions',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'
+                }
+            ^AZManagementGroup$ {
+                'Users',
+                'Groups',
+                'ManagementGroups',
+                'Subscriptions',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'
+                }
+            ^AZSubscription$ {
+                'Users',
+                'Groups',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'
+                }
+            ^AZResourceGroup$ {
+                'Users',
+                'Groups',
+                'ResourceGroups',
+                'VMs',
+                'ManagedClusters',
+                'VMScaleSets',
+                'ContainerRegistries',
+                'WebApps',
+                'AutomationAccounts',
+                'KeyVaults',
+                'FunctionApps',
+                'LogicApps',
+                'AppRegistrations',
+                'ServicePrincipals',
+                'Devices',
+                'InboundControl'}
+            ^AZVM$                  {'LocalAdmins','InboundControl'}
+            ^AZAutomationAccount$   {'InboundControl'}
+            ^AZLogicApp$            {'InboundControl'}
+            ^AZFunctionApp$         {'InboundControl'}
+            ^AZWebApp$              {'InboundControl'}
+            ^AZKeyVault$            {'InboundControl','KeyReaders','CertificateReaders','SecretReaders',,'AllReaders'}
+            ^AZManagedCluster$      {'InboundControl'}
+            ^AZVMScaleSet$          {'InboundControl'}
+            ^AZContainerRegistry$   {'InboundControl'}
             # AZ AAD
-            ^AZRole$   {'ActiveAssignments'}
-            ^AZUser$ {'ToDo'}
-            ^AZGroup$ {'ToDo'}
-            ^AZServicePrincipal$ {'ToDo'}
-            ^AZApp$ {'ToDo'}
-            ^AZDevice$ {'ToDo'}
+            ^AZRole$                {'ActiveAssignments'<#,'PimAssignments'#>}
+            ^AZUser$                {'MemberOf','Roles','ExecutionPrivileges','OutboundControl','InboundControl'}
+            ^AZGroup$               {'Members','MemberOf','Roles','InboundControl','OutboundControl'}
+            ^AZServicePrincipal$    {'Roles','InboundControl','OutboundControl','InboundAppRole','OutboundAppRole'}
+            ^AZApp$                 {'InboundControl'}
+            ^AZDevice$              {'LocalAdmin','InboundControl'}
             #Default{}
             }
         # Prep DynP
@@ -2203,11 +2615,11 @@ function Get-BHNode{
         # Return Dico
         Return $Dico
         }
-    Begin{if($Search){foreach($Key in $Keyword){Search-BHNode $Label $Key |%{
-            if($DynP.Value){$_|Get-BHNode $Label -List $DynP.Value -Expand $Expand -AsPath:$ASPath -Cypher:$Cypher -limit $Limit -PropOnly:$PropOnly}
-            else{$_|Get-BHNode $Label -Expand $Expand -AsPath:$ASPath -Cypher:$Cypher -limit $Limit -PropOnly:$PropOnly}
-            }}}}
-    Process{Foreach($ObjID in $ObjectID){
+    Begin{Foreach($SessID in $SessionID){if($Search){foreach($Key in $Keyword){Search-BHNode $Label $Key -SessionID $SessID -limit $Limit |%{
+            if($DynP.Value){$_|Get-BHNode $Label -List $DynP.Value -Expand $Expand -AsPath:$ASPath -Cypher:$Cypher -limit $Limit -PropOnly:$PropOnly -SessionID $SessID}
+            else{$_|Get-BHNode $Label -Expand $Expand -AsPath:$ASPath -Cypher:$Cypher -limit $Limit -PropOnly:$PropOnly -SessionID $SessID}
+            }}}}}
+    Process{Foreach($SessID in $SessionID){Foreach($ObjID in $ObjectID){
         $URL = Switch -regex ($Label){
             # AD
             ^Base$      {"api/v2/base/$ObjID"}
@@ -2219,47 +2631,54 @@ function Get-BHNode{
             ^OU$        {"api/v2/ous/$ObjID"}
             ^User$      {"api/v2/users/$ObjID"}
             # ADCS
-            ^AIACA$        {"api/v2/aiacas/{$ObjID"}
+            ^AIACA$        {"api/v2/aiacas/$ObjID"}
             ^CertTemplate$ {"api/v2/certtemplates/$ObjID"}
             ^EnterpriseCA$ {"api/v2/enterprisecas/$ObjID"}
             ^NTAuthStore$  {"api/v2/ntauthstores/$ObjID"}
             ^RootCA$       {"api/v2/rootcas/$ObjID"}
             # AZ
             ^AZ {$lbl = Switch($label){
-                    AZApp {'applications'}
-                    AZManagementGroup{'management-groups'}
-                    AZResourceGroup{'resource-groups'}
-                    AZServicePrincipal{'service-principals'}
+                    AZBase                  {'az-base'}
+                    AZApp                   {'applications'}
+                    AZAutomationAccount     {'automation-accounts'}
+                    AZContainerRegistry     {'container-registries'}
+                    AZFunctionApp           {'function-apps'}
+                    AZKeyVault              {'key-vaults'}
+                    AZLogicApp              {'logic-apps'}
+                    AZManagementGroup       {'management-groups'}
+                    AZManagedCluster        {'managed-clusters'}
+                    AZResourceGroup         {'resource-groups'}
+                    AZServicePrincipal      {'service-principals'}
+                    AZVMScaleSet            {'vm-scale-sets'}
+                    AZWebApp                {'web-apps'}
                     Default{"$("$label".tolower()-replace"^az")s"}
                     }
                 "api/v2/azure/${lbl}?object_id=$($ObjID-replace"/",'%2F')"
                 }
-            #^AZ        {"api/v2/azure/$("$label".tolower()-replace"^az")s?object_id=$($ObjID-replace"/",'%2F')"}
-            #^AZ        {"api/v2/azure/tenants?object_id=$ObjID"}# <------------ /!\ API Broken?
-            Default    {"api/v2/base/$ObjID"}
+            Default{"api/v2/base/$ObjID"}
             }
         $URL += Switch($DynP.value){
-            # AD
+            # AD+
             AdminRights                  {'/admin-rights'}
             AdminUsers                   {'/admin-users'}
             Computers                    {'/computers'}
             ConstrainedDelegationRights  {'/constrained-delegation-rights'}
-            ConstrainedUsers             {'/contrained-user'}
+            ConstrainedUsers             {'/constrained-users'}
             Controllables                {'/controllables'}
             Controllers                  {'/controllers'}
             DCOMRights                   {'/dcom-rights'}
             DCOMUsers                    {'/dcom-users'}
-            DCSyncers                    {'/dcsyncers'}
-            ForeignAdmins                {'/foregin-admins'}
-            ForeignGPOControllers        {'/foregin-gpo-contollers'}
+            DCSyncers                    {'/dc-syncers'}
+            ForeignAdmins                {'/foreign-admins'}
+            ForeignGPOControllers        {'/foreign-gpo-contollers'}
             ForeignGroups                {'/foreign-groups'}
             ForeignUsers                 {'/foreign-users'}
-            GPOs                         {'/gpo'}
+            GPOs                         {'/gpos'}
             GroupMemberships             {'/group-memberships'}
-            Groups                       {'/groups'}
+            Groups                       {$(if($Label -match '^AZ'){'&related_entity_type=descendent-groups'}else{'/groups'})}
             IndoundTrusts                {'/indbound-trusts'}
             LinkedGPOs                   {'/linked-gpos'}
-            Members                      {'/members'}
+            Members                      {$(if($Label -match '^AZ'){'&related_entity_type=group-members'}else{'/members'})}
             Memberships                  {'/memberships'}
             OUs                          {'/ous'}
             OutboundTrusts               {'/outboud-trusts'}
@@ -2271,18 +2690,17 @@ function Get-BHNode{
             SQLAdminRights               {'/sql-admin-rights'}
             SQLAdmins                    {'/sql-admins'}
             TierZero                     {'/tier-zero'}
-            Users                        {'/users'}
-            # AZ
-            AADUsers                     {'&related_entity_type=descendent-users'}
-            AADGroups                    {'&related_entity_type=descendent-groups'}
-            AADAppRegistrations          {'&related_entity_type=descendent-applications'}
-            AADServicePrincipals         {'&related_entity_type=descendent-service-principals'}
-            AADDevices                   {'&related_entity_type=descendent-devices'}
+            Users                        {$(if($Label -match '^AZ'){'&related_entity_type=descendent-users'}else{'/users'})}
+            ## AZ
+            # Descendents
+            AppRegistrations             {'&related_entity_type=descendent-applications'}
+            ServicePrincipals            {'&related_entity_type=descendent-service-principals'}
+            Devices                      {'&related_entity_type=descendent-devices'}
             ManagementGroups             {'&related_entity_type=descendent-management-groups'}
             Subscriptions                {'&related_entity_type=descendent-subscriptions'}
             ResourceGroups               {'&related_entity_type=descendent-resource-groups'}
             AutomationAccounts           {'&related_entity_type=descendent-automation-accounts'}
-            VMs                          {'&related_entity_type=descendent-vms'}
+            VMs                          {'&related_entity_type=descendent-virtual-machines'}
             ManagedClusters              {'&related_entity_type=descendent-managed-clusters'}
             VMScaleSets                  {'&related_entity_type=descendent-vm-scale-sets'}
             ContainerRegistries          {'&related_entity_type=descendent-container-registries'}
@@ -2290,58 +2708,165 @@ function Get-BHNode{
             LogicApps                    {'&related_entity_type=descendent-logic-apps'}
             WebApps                      {'&related_entity_type=descendent-web-apps'}
             KeyVaults                    {'&related_entity_type=descendent-key-vaults'}
+            # Other
             InboundControl               {'&related_entity_type=inbound-control'}
-            ActiveAssignments            {'&related_entity_type=active-assignments'}   
-            Default                      {}
+            OutboundControl              {'&related_entity_type=outbound-control'}
+            ActiveAssignments            {'&related_entity_type=active-assignments'}
+            Roles                        {'&related_entity_type=roles'}
+            MemberOf                     {'&related_entity_type=group-membership'}
+            ExecutionPrivileges          {'&related_entity_type=outbound-execution-privileges'}
+            InboundAppRole               {'&related_entity_type=inbound-abusable-app-role-asignments'} # /!\ Not Tested
+            OutboundAppRole              {'&related_entity_type=outbound-abusable-app-role-asignments'} # /!\ Not Tested
+            LocalAdmins                  {'&related_entity_type=inbound-execution-privileges'} # /!\ Not Tested
+            #PimAssignments               {}<------------- /!\ Check
+            KeyReaders                   {'&related_entity_type=key-readers'}
+            SecretReaders                {'&related_entity_type=secret-readers'}
+            CertificateReaders           {'&related_entity_type=certificate-readers'}
+            AllReaders                   {'&related_entity_type=all-readers'}
+            #Default                      {}
             }
         $URL+=if($URL -match 'azure'){"&limit=$Limit"}else{"?limit=$Limit"}
-        $Obj = Invoke-BHAPI $URL -expand $Expand
-        if($DynP.Value){if($Obj -AND $AsPath){
-            Switch($DynP.Value){
-                AdminRights                  {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|AdminTo'}
-                AdminUsers                   {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf|AdminTo'}
-                Computers                    {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                ConstrainedDelegationRights  {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
-                ConstrainedUsers             {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
-                Controllables                {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
-                Controllers                  {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
-                DCOMRights                   {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|ExecuteDCOM'}
-                DCOMUsers                    {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf|ExecuteDCOM'}
-                DCSyncers                    {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':CanDCSync|SyncLAPSPassword'}
-                ForeignAdmins                {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
-                ForeignGPOControllers        {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
-                ForeignGroups                {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
-                ForeignUsers                 {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=$Null}
-                GPOs                         {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                GroupMemberships             {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf'}
-                Groups                       {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                IndoundTrusts                {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':TrustedBy'}
-                LinkedGPOs                   {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':GPLink|Contains'}
-                Members                      {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf'}
-                Memberships                  {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf'}
-                OUs                          {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                OutboundTrusts               {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':TrustedBy'}
-                PSRemoteRights               {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|CanPSRemote'}
-                PSRemoteUsers                {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf|CanPSRemote'}
-                RDPRights                    {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|CanRDP'}
-                RDPUsers                     {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|CanRDP'}
-                Sessions                     {Switch($Label){Computer{$SrcID=$ObjID;$TgtID=$Obj.ObjectID}Default{$SrcID=$Obj.objectID;$TgtID=$ObjID}};$Fltr='HasSession'}
-                SQLAdminRights               {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':MemberOf|SQLAdmin'}
-                SQLAdmins                    {$SrcID=$Obj.objectID;$TgtID=$ObjID;$Fltr=':MemberOf|SQLAdmin'}
-                TierZero                     {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                Users                        {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=':Contains'}
-                Default                      {$SrcID=$ObjID;$TgtID=$Obj.ObjectID;$Fltr=$Null}
+        if($PropOnly){$URL+="&counts=false"}
+        if($DynP.Value -AND ($AsPath -OR $Cypher)){
+            # EdgeList
+            # AD
+            $ADAttackEdge = (Get-BHPathfilter -ListAll | ? Platform -eq AD).edge
+            # AZ
+            $AZAttackEdge = (Get-BHPathfilter -ListAll | ? Platform -eq AZ).edge
+            $AZExecEdge = 'AZVMAdminLogin',
+                'AZVMContributor',
+                'AZAvereContributor',
+                'AZWebsiteContributor',
+                'AZContributor',
+                'AZExecuteCommand'
+            $AZAppAbuseEdge = 'AZApplicationReadWriteAll',
+                'AZAppRoleAssignmentReadWriteAll',
+                'AZDirectoryReadWriteAll',
+                'AZGroupReadWriteAll',
+                'AZGroupMemberReadWriteAll',
+                'AZRoleManagementReadWriteDirectory',
+                'AZServicePrincipalEndpointReadWriteAll'
+            $AZControlEdge=	'AZAvereContributor',
+                'AZContributor',
+                'AZOwner',
+                'AZVMContributor',
+                'AZAutomationContributor',
+                'AZKeyVaultContributor',
+                'AZAddMembers',
+                'AZAddSecret',
+                'AZExecuteCommand',
+                'AZGlobalAdmin',
+                'AZGrant',
+                'AZGrantSelf',
+                'AZPrivilegedRoleAdmin',
+                'AZResetPassword',
+                'AZUserAccessAdministrator',
+                'AZOwns',
+                'AZCloudAppAdmin',
+                'AZAppAdmin',
+                'AZAddOwner',
+                'AZManagedIdentity',
+                'AZAKSContributor',
+                'AZWebsiteContributor',
+                'AZLogicAppContributor',
+                'AZAZMGAddMember',
+                'AZAZMGAddOwner',
+                'AZMGAddSecret',
+                'AZMGGrantAppRoles',
+                'AZMGGrantRole'
+            # Query /!\ EXPERIMENTAL FEATURE /!\
+            $Query = Switch($DynP.Value){
+                AdminRights                  {"MATCH p=(:$Label{objectid:'$objID'})-[:MemberOf|AdminTo*1..]->(x:Computer)"}
+                AdminUsers                   {"MATCH p=shortestPath((x:User)-[:MemberOf|AdminTo*1..]->(:$Label{objectid:'$objID'}))"} # Shortest??
+                Computers                    {"MATCH p=(:$Label{objectid:'$objID'})-[:Contains*1..]->(x:Computer)"}
+                ConstrainedDelegationRights  {"MATCH p=(:$Label{objectid:'$objID'})-[:MemberOf|AllowedToDelegate*1..]->(x:Computer)"}
+                ConstrainedUsers             {"MATCH p=(x:Base)-[:MemberOf|AllowedToDelegate*1..]->(:$Label{objectid:'$objID'})"}
+                Controllables                {"MATCH p=(:$Label{objectid:'$objID'})-[:$($ADAttackEdge-join'|')*1..]->(x:Base)"}
+                Controllers                  {"MATCH p=(x:Base)-[:$($ADAttackEdge-join'|')*1..]->(:$Label{objectid:'$objID'})"}
+                DCOMRights                   {"MATCH p=(:$Label{objectid:'$objID'})-[:MemberOf|ExecuteDCOM*1..]->(x:Computer)"}
+                DCOMUsers                    {"MATCH p=(x:Base)-[:MemberOf|ExecuteDCOM*1..]->(:$Label{objectid:'$objID'})"}
+                DCSyncers                    {"MATCH p=(x:Base)-[:DCSync|SyncLAPSPassword]->(:$Label{objectid:'$ObjID'})"}
+                ForeignAdmins                {"MATCH p=shortestPath((x:User)-[:MemberOf|AdminTo*1..]->(y:$Label{objectid:'$objID'})) WHERE x.domain<>y.domain"}
+                ForeignGPOControllers        {<#ToDo#>}
+                ForeignGroups                {<#ToDo#>}
+                ForeignUsers                 {<#ToDo#>}
+                GPOs                         {"MATCH p=(:$Label{objectid:'$ObjID'})<-[:GPLink|Contains*1..]-(x:GPO)"}
+                GroupMemberships             {"MATCH p=(:$Label{objectid:'$ObjID'})-[:MemberOf*1..]->(x:Group)"}
+                Groups                       {if($URL -match 'azure'){"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains]->(x:AZGroup)"}
+                                                else{"MATCH p=(:$Label{objectid:'$ObjID'})-[:Contains]->(x:Group)"}
+                                                }
+                IndoundTrusts                {"MATCH p=(:$Label{objectid:'$ObjID'})-[:TrustedBy*1..]->(x:Domain)"}
+                LinkedGPOs                   {"MATCH p=(x:GPO)-[:GPLink|Contains*1..]->(:$Label{objectid:'$ObjID'})"}
+                Members                      {if($URL -match 'azure'){"MATCH p=(:AZBase)-[:AZMemberOf*1..]->(:$Label{objectid:'$ObjID'})"}
+                                                else{"MATCH p=(:Base)-[:MemberOf*1..]->(:$Label{objectid:'$ObjID'})"}
+                                                }
+                Memberships                  {"MATCH p=(:$Label{objectid:'$ObjID'})-[:MemberOf*1..]->(x:Group)"}
+                OUs                          {"MATCH p=(:$Label{objectid:'$ObjID'})-[:Contains*1..]->(x:OU)"}
+                OutboundTrusts               {"MATCH p=(x:Domain)-[:TrustedBy*1..]->(:$Label{objectid:'$ObjID'})"}
+                PSRemoteRights               {"MATCH p=(:$Label{objectid:'$objID'})-[:MemberOf|CanPSRemote*1..]->(x:Computer)"}
+                PSRemoteUsers                {"MATCH p=shortestPath((x:User)-[:MemberOf|CanPSRemote*1..]->(:$Label{objectid:'$objID'}))"}
+                RDPRights                    {"MATCH p=(:$Label{objectid:'$objID'})-[:MemberOf|CanRDP*1..]->(x:Computer)"}
+                RDPUsers                     {"MATCH p=shortestPath((x:User)-[:MemberOf|CanRDP*1..]->(:$Label{objectid:'$objID'}))"}
+                Sessions                     {Switch($Label){
+                                                Computer{"MATCH(:$Label{objectid:'$ObjID'})-[:HasSession]->(x:User)"}
+                                                Default{"MATCH(:$Label{objectid:'$ObjID'})-[:MemberOf|HasSession*1..]->(x:User)"} # TEST /!\
+                                                }}
+                SQLAdminRights               {"MATCH p=(:$Label{objectid:'$objID'})-[:MemberOf|SQLAdmin*1..]->(x:Computer)"}
+                SQLAdmins                    {"MATCH p=shortestPath((x:User)-[:MemberOf|SQLDamin*1..]->(:$Label{objectid:'$objID'}))"}
+                TierZero                     {"MATCH p=(:$Label{objectid:'$ObjID'})-[:Contains]->(x:Base)`r`nWHERE x.system_tags CONTAINS 'admin_tier_0'"}
+                Users                        {if($URL -match 'azure'){"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains]->(x:AZUser)"}
+                                                else{"MATCH p=(:$Label{objectid:'$ObjID'})-[:Contains*1..]->(x:User)"}
+                                                }
+                ## AZ - Descendents
+                AppRegistrations             {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains]->(x:AZApp)"}
+                ServicePrincipals            {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains]->(x:AZServicePrincipal)"}
+                Devices                      {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains]->(x:AZDevice)"}
+                ManagementGroups             {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZManagementGroup)"}
+                Subscriptions                {if($Label -eq 'AZTenant'){"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains]->(x:AZSubscription)"}
+                                                else{"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZSubscription)"}}
+                ResourceGroups               {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZResourceGroup)"}
+                AutomationAccounts           {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZAutomationAccount)"}
+                VMs                          {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZVM)"}
+                ManagedClusters              {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZManagedCluster)"}
+                VMScaleSets                  {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZVMScaleSet)"}
+                ContainerRegistries          {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZContainerRegistry)"}
+                FunctionApps                 {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZFunctionApp)"}
+                LogicApps                    {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZLogicApp)"}
+                WebApps                      {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZWebApp)"}
+                KeyVaults                    {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZContains*1..]->(x:AZKeyVault)"}
+                # AZ - Other
+                InboundControl               {"MATCH p=(x:AZBase)-[:AZMemberOf|$($AZControlEdge-join'|')*1..]->(:$Label{objectid:'$objID'})"}
+                OutboundControl              {"MATCH p=(:$Label{objectid:'$objID'})-[:AZMemberOf|$($AZControlEdge-join'|')*1..]->(x:AZBase)"}
+                ActiveAssignments            {"MATCH (x:AZBase)-[:AZHasRole]->(:$Label{objectid:'$ObjID'})"}# AZMemberOf??
+                Roles                        {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZMemberOf|AZHasRole*1..]->(x:AZRole)"}
+                MemberOf                     {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZMemberOf*1..]->(x:AZGroup)"}
+                ExecutionPrivileges          {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZMemberOf|$($AZExecEdge-join'|')*1..]->(x:AZBase) WHERE NOT x:AZGroup"}
+                InboundAppRole               {"MATCH p=(:$Label{objectid:'$ObjID'})-[:AZMemberOf|$($AZAppAbuseEdge-join'|')*1..]->(x:AZBase)"}
+                OutboundAppRole              {"MATCH p=(x:AZBase)-[:$($AZAppAbuseEdge-join'|')*1..]->(:$Label{objectid:'$ObjID'})"}
+                LocalAdmins                  {"MATCH (x:AZBase)-[:AZMemberOf|$($AZExecEdge-join'|')*1..]->(:$Label{objectid:'$ObjID'})"}
+                #PimAssignments              {}
+                KeyReaders                   {"MATCH p=(x:AZBase)-[:AZMemberOf|AZOwner|AZContributor|AZGetKeys*1..]->(:$Label{objectid:'$ObjID'})"}
+                SecretReaders                {"MATCH p=(x:AZBase)-[:AZMemberOf|AZGetSecrets*1..]->(:$Label{objectid:'$ObjID'})"}
+                CertificateReaders           {"MATCH p=(x:AZBase)-[:AZMemberOf|AZGetCertificates*1..]->(:$Label{objectid:'$ObjID'})"}
+                AllReaders                   {"MATCH p=(x:AZBase)-[:AZMemberOf|AZGetKeys|AZGetSecrets|AZGetCertificates*1..]->(:$Label{objectid:'$ObjID'})"}
+                #Default                     {}
                 }
-            $Query = (Get-BHPath -SourceId $SrcID -TargetID $TgtID -Edge $Fltr -limit $($null) -Cypher).trim()
-            $Obj = if($Cypher){if(($BHSession|? x|Select -last 1).CypherClip){$Query| Set-Clipboard};RETURN $Query}else{Get-BHPath $Query}
-            #$Obj=$CypherQ
-            }}
-        if($Obj){if($DynP.IsSet){$Obj}else{Format-BHNode $Obj -PropOnly:$PropOnly}}
-        }}
+            #$Query = (Get-BHPath -SourceId $SrcID -TargetID $TgtID -Edge $Fltr -limit $($null) -orderby "LENGTH(p)"-Cypher).trim()
+            #$Obj = if($Cypher){if(($BHSession|? x|Select -last 1).CypherClip){$Query| Set-Clipboard};RETURN $Query}else{
+            #    #Get-BHPath $Query #-SessionID $SessID
+            #    $Query
+            #    }
+            $Query+=if($AsPath){"`r`nRETURN p"}else{"`r`nRETURN x"}
+            if($Limit){$Query = "$Query`r`nLIMIT $Limit"}
+            $Obj = BHPath -Query $Query -Cypher:$Cypher
+            }
+        else{$Obj=if($Cypher){"MATCH (x:$Label{objectid:'$ObjID'}) RETURN x"}else{Invoke-BHAPI $URL -expand $Expand -SessionID $SessID}
+            }
+        if($Obj){if($DynP.IsSet){if($Obj.props -AND $Obj.kind -AND $PropOnly){$Obj.props}else{$Obj}}else{if($Cypher){$Obj}else{Format-BHNode $Obj -PropOnly:$PropOnly}}}
+        }}}
     End{}
     }
 #End
-#>
 
 
 ################################################ Get-BHNodeGroup
@@ -2551,19 +3076,15 @@ function Remove-BHNodeFromNodeGroup{
     Begin{NoMultiSession}
     Process{Foreach($NodeID in $ObjectID){if($Force -OR $(Confirm-Action "Remove Object $NodeID from Asset Group $NodegroupID")){
         # Get Selector
-        $SelectSelect = Get-BHNodeGroup -Selector | ? selector -eq $NodeID
-        #RETURN $SelectSelect
+        $SelectSelect = Get-BHNodeGroup -ID $NodegroupID -Selector | ? selector -eq $NodeID
         # Remove Selector
-        $RemoveSelect = @{
+        if($SelectSelect){$RemoveSelect=@{
             action = 'remove'
             selector_name = $SelectSelect.name
             sid = $SelectSelect.Selector
             } | ConvertTo-Json -Depth 11
         BHAPI api/v2/asset-groups/$NodeGroupID/selectors PUT "[$RemoveSelect]" -expand data.removed_selectors
-        #$SlctrID = (Get-BHNodeGroup -id $NodeGroupID -Selector -verbose:$False| ? selector -eq $NodeID).id
-        #if($SlctrID){$Null = BHAPI api/v2/asset-groups/$NodeGroupID/selectors/$SlctrID DELETE}
-        #else{Write-Warning "No matching selector found."}
-        }}}
+        }}}}
     End{if($Analyze){Start-BHDataAnalysis -verbose:$false}}
     }
 #End
@@ -2604,6 +3125,8 @@ enum BHEdgeGroup{
     AZCredentialAccess
     AZRMObjectBasic
     AZRMObjectAdvanced
+    # X-Platform
+    CrossPlatform
     }
 #End
 
@@ -2646,16 +3169,21 @@ enum BHEdge{
     AddKeyCredentialLink
     WriteAccountRestrictions
     WriteSPN
+    WriteGPLink
     # ADCertService
     GoldenCert
     ADCSESC1
     ADCSESC3
+    ADCSESC4
     ADCSESC6a
     ADCSESC6b
     ADCSESC9a
     ADCSESC9b
     ADCSESC10a
     ADCSESC10b
+    ADCSESC13
+    # X-Platform
+    SyncedToEntraUser
     ## AZ
     # AZStructure
     AZAppAdmin
@@ -2683,6 +3211,7 @@ enum BHEdge{
     AZMGAddOwner
     AZMGAddSecret
     AZMGGrantAppRoles
+    AZMGGrantRole
     # AZCredentialAccess
     AZGetCertficates
     AZGetKeys
@@ -2698,8 +3227,10 @@ enum BHEdge{
     # AZRMObjectAdvanced
     AZAKSContributor
     AZAutomationContributor
-    AZogicAppContributor
+    AZLogicAppContributor
     AZWebsiteContributor
+    # X-Platform
+    SyncedToADUser
     }
 #End
 
@@ -2761,16 +3292,21 @@ function Get-BHPathFilter{
         [PSCustomObject]@{Platform='AD'; Group='ADObjectAdvanced'; Edge='AddKeyCredentialLink'}
         [PSCustomObject]@{Platform='AD'; Group='ADObjectAdvanced'; Edge='WriteAccountRestrictions'}
         [PSCustomObject]@{Platform='AD'; Group='ADObjectAdvanced'; Edge='WriteSPN'}
+        [PSCustomObject]@{Platform='AD'; Group='ADObjectAdvanced'; Edge='WriteGPLink'}
         # AD Cert Service
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='GoldenCert'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC1'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC3'}
+        [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC4'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC6a'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC6b'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC9a'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC9b'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC10a'}
         [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC10b'}
+        [PSCustomObject]@{Platform='AD'; Group='ADCertService'; Edge='ADCSESC13'}
+        # X-Platform
+        [PSCustomObject]@{Platform='AD'; Group='CrossPlatform'; Edge='SyncedToEntraUser'}
         ## AZ
         # Structure
         [PSCustomObject]@{Platform='AZ'; Group='AZStructure'; Edge='AZAppAdmin'}
@@ -2798,6 +3334,7 @@ function Get-BHPathFilter{
         [PSCustomObject]@{Platform='AZ'; Group='AZGraphRole'; Edge='AZMGAddOwner'}
         [PSCustomObject]@{Platform='AZ'; Group='AZGraphRole'; Edge='AZMGAddSecret'}
         [PSCustomObject]@{Platform='AZ'; Group='AZGraphRole'; Edge='AZMGGrantAppRoles'}
+        [PSCustomObject]@{Platform='AZ'; Group='AZGraphRole'; Edge='AZMGGrantRole'}
         # Credential Access
         [PSCustomObject]@{Platform='AZ'; Group='AZCredentialAccess'; Edge='AZGetCertficates'}
         [PSCustomObject]@{Platform='AZ'; Group='AZCredentialAccess'; Edge='AZGetKeys'}
@@ -2815,6 +3352,8 @@ function Get-BHPathFilter{
         [PSCustomObject]@{Platform='AZ'; Group='AZRMObjectAdvanced'; Edge='AZAutomationContributor'}
         [PSCustomObject]@{Platform='AZ'; Group='AZRMObjectAdvanced'; Edge='AZogicAppContributor'}
         [PSCustomObject]@{Platform='AZ'; Group='AZRMObjectAdvanced'; Edge='AZWebsiteContributor'}
+        # X-Platform
+        [PSCustomObject]@{Platform='AZ'; Group='CrossPlatform'; Edge='SyncedToADUser'}
         )
     # List All
     if($ListAll){if($BHFilter){$BHFilter}else{$EdgeList}}
@@ -2881,7 +3420,7 @@ function Get-BHPath{
     [CmdletBinding(DefaultParameterSetName='Query')]
     [Alias('Invoke-BHCypher','BHCypher')]
     Param(
-        [Parameter(Mandatory=1,Position=0,ParameterSetName='Query')][Alias('q')][String]$Query,
+        [Parameter(Mandatory=1,Position=0,ParameterSetName='Query',ValueFromPipeline)][Alias('q')][String]$Query,
         [Parameter(Mandatory=0,ParameterSetName='Manual')]
         [Parameter(Mandatory=0,ParameterSetName='ByID')][Alias('Any')][Switch]$All,
         [Parameter(Mandatory=0,ParameterSetName='Manual')]
@@ -2909,8 +3448,10 @@ function Get-BHPath{
         [Parameter(Mandatory=0,ParameterSetName='ByID')][Int]$Limit=$($BHSession|? x|select -last 1).limit,
         [Parameter(Mandatory=0)][Switch]$Cypher,
         [Parameter(Mandatory=0)][Switch]$NoConvert,
+        [Parameter(Mandatory=0)][Switch]$Minimal,
         [Parameter(Mandatory=0)][Alias('dot')][String]$Expand
         )
+    Process{
     # Source / Target
     if($Source -AND $Source -notmatch "^\{"){if($Source -notmatch "^\:"){$Source=":$Source"}}
     if($Target -AND $Target -notmatch "^\{"){if($Target -notmatch "^\:"){$Target=":$Target"}}
@@ -2943,7 +3484,7 @@ RETURN $Return$(if($OrderBy){"`r`nORDER BY $OrderBy"})$(if($Limit){"`r`nLIMIT $L
     # API Call
     Write-Verbose "[BH] POST api/v2/graphs/cypher
 $($CypherQ.trim())"
-    $Body = @{query=$CypherQ;include_properties=$true}|ConvertTo-Json
+    $Body = @{query=$CypherQ;include_properties=$(-Not$Minimal)}|ConvertTo-Json
     $QData = Invoke-BHAPI 'api/v2/graphs/cypher' -Method POST -Body $Body -expand $(if($NoConvert){$Expand}else{'data'}) -verbose:$False
     #$QData = BHPath -Query $CypherQ.trim() -Verbose:$false
     #if(-Not$shortest -AND -Not$All){$QData.edges=$QData.Edges|Sort-Object {"$($_.sourceS)-$($_.Target)"} -unique}
@@ -2983,7 +3524,7 @@ $($CypherQ.trim())"
         if($Expand){foreach($Dot in $Expand.split('.')){$Out=try{$Out.$Dot}Catch{$Out}}}
         RETURN $Out
         }
-    }
+    }}
 #End
 
 
@@ -3053,29 +3594,50 @@ function Get-BHPathComposition{
 
 <#
 .SYNOPSIS
-    Get BloodHound Path Query
+    Get BloodHound Query
 .DESCRIPTION
     Get BloodHound Saved Query 
 .EXAMPLE
     BHQuery
+.EXAMPLE
+    BHQuery -ID 123
+.EXAMPLE
+    BHQuery -name MyQuery
+.EXAMPLE
+    BHQuery -description <keyword>
+.EXAMPLE
+    BHQuery -scope <shared|public>
 #>
 function Get-BHPathQuery{
-    [Alias('BHQuery')]
+    [CmdletBinding(DefaultParameterSetName='ByID')]
+    [Alias('BHQuery','Get-BHQuery')]
     Param(
-        [Parameter(Mandatory=0)][Int[]]$ID
+        [Parameter(Mandatory=0,Position=0,ParameterSetName='ByID')][String[]]$ID,
+        [Parameter(Mandatory=1,ParameterSetName='ByName')][String[]]$Name,
+        [ValidateSet('public','shared')]
+        [Parameter(Mandatory=1,ParameterSetName='ByScope')][String]$Scope,
+        [Parameter(Mandatory=1,ParameterSetName='ByDescription')][String[]]$Description,
+        [Parameter(Mandatory=0)][String]$Expand='data'
         )
-    if($ID.count){foreach($Qid in $ID){Invoke-BHAPI api/v2/saved-queries/$Qid -expand data}}
-    else{Invoke-BHAPI api/v2/saved-queries -expand data}
+    NoMultiSession
+    Switch($PSCmdlet.ParameterSetName){
+        ByID{$Q=BHAPI api/v2/saved-queries -expand $Expand
+            if($ID){$Q|Where id -In $ID}else{$Q}
+            }
+        ByName{BHAPI api/v2/saved-queries -Filter "name=~eq:$Name" -expand $Expand}
+        ByDescription{BHAPI api/v2/saved-queries -Filter "description=~eq:$Description" -expand $expand}
+        ByScope{BHAPI api/v2/saved-queries -Filter "scope=$Scope" -expand $expand}
+        }
     }
 #End
 
 <#
 .SYNOPSIS
-    New BloodHound Saved Query
+    New BloodHound Query
 .DESCRIPTION
     New BloodHound saved query 
 .EXAMPLE
-    New-BHPathQuery -Name testQuery -Query "MATCH (x) RETURN x LIMIT 1"
+    New-BHPathQuery -Name MySavedQuery -Query "MATCH (x:User) RETURN x LIMIT 1" -Desc "My Saved Query"
 #>
 function New-BHPathQuery{
     [Alias('New-BHQuery')]
@@ -3083,23 +3645,86 @@ function New-BHPathQuery{
         [Parameter(Mandatory=1,ValueFromPipelineByPropertyName)][String]$Name,
         #[Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$OID,
         #[Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$Platform,
-        #[Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$Description,
-        [Parameter(Mandatory=1,ValueFromPipelineByPropertyName)][String]$Query
+        [Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$Description='Custom Query',
+        [Parameter(Mandatory=1,ValueFromPipelineByPropertyName)][String]$Query,
+        [Parameter(Mandatory=0)][Switch]$PassThru
         )
-    Begin{}
+    Begin{NoMultiSession}
     Process{
         # Body
         $Body = @{
             name  = $Name
+            description = $Description
             query = $Query
             }
         #if($OID){$Body['OID']=$OID}
         #if($Platform){$Body['Platform']=$Platform}
-        #if($Description){$Body['Description']=$Description}
+        if($Description){$Body['Description']=$Description}
         $SQ = Invoke-BHAPI api/v2/saved-queries -Method POST -Body ($Body| ConvertTo-Json) -expand data
         if($PassThru){$SQ}
         }
     End{}
+    }
+#End
+
+<#
+.SYNOPSIS
+    Set BloodHound Query
+.DESCRIPTION
+    Set BloodHound saved query 
+.EXAMPLE
+    Set-BHPathQuery -ID 123 -Name MySavedQuery
+#>
+function Set-BHPathQuery{
+    [Alias('Set-BHQuery')]
+    Param(
+        [Parameter(Mandatory=1)][int]$ID,
+        [Parameter(Mandatory=0)][String]$Name,
+        [Parameter(Mandatory=0)][String]$Query,
+        [Parameter(Mandatory=0)][String]$Description
+        )
+    NoMultiSession
+    $QObj = Get-BHPathQuery -id $ID | Select Name,Description,Query
+    if($QObj){
+        if($Name){$QObj.Name=$Name}
+        if($Query){$QObj.Query=$Query}
+        if($Description){$QObj.Description=$Description}
+        BHAPI saved-queries/$ID PUT ($QObj|Convertto-Json) -Expand data
+        }
+    }
+#End
+
+<#
+.SYNOPSIS
+    Set BloodHound Query Permissions
+.DESCRIPTION
+    Set BloodHound saved query permissions
+.EXAMPLE
+    Set-BHQueryPermission -ID 123 -Public
+.EXAMPLE
+    Set-BHQueryPermission -ID 123 -Private
+.EXAMPLE
+    Set-BHQueryPermission -ID 123 -Share <UserID[]>
+.EXAMPLE
+    Set-BHQueryPermission -ID 123 -Share <UserID[]> -Remove
+#>
+function Set-BHPathQueryPermission{
+    [Alias('Set-BHQueryPermission')]
+    Param(
+        [Parameter(Mandatory=1,Position=0)][int]$ID,
+        [Parameter(Mandatory=1,ParameterSetName='Public')][Switch]$Public,
+        [Parameter(Mandatory=1,ParameterSetName='Private')][Switch]$Private,
+        [Parameter(Mandatory=1,ParameterSetName='Share')][String[]]$Share,
+        [Parameter(Mandatory=0,ParameterSetName='Share')][Switch]$Remove
+        )
+    NoMultiSession
+    $Perm=Switch($PSCmdlet.ParameterSetName){
+        Private{@{public=$false}}
+        Public {@{public=$true}}
+        Share  {@{user_ids=@($Share);public=$false}}
+        }
+    $Verb=if($Remove){'DELETE'}Else{'PUT'}
+    BHAPI saved-queries/$ID/permissions $Verb -Body ($Perm|Convertto-Json)
     }
 #End
 
@@ -3126,16 +3751,48 @@ Function Remove-BHPathQuery{
     }
 #End
 
-
-<# <------------------------------ Wait for more props (description/...)
+<#
+.SYNOPSIS
+    Invoke BloodHound Query
+.DESCRIPTION
+    Invoke BloodHound query
+.EXAMPLE
+    Invoke-BHQuery "MATCH (x:User) RETURN x LIMIT 1"
+.EXAMPLE
+    Invoke-BHQuery "api/version"
+.EXAMPLE
+    BHQuery -ID 123 | BHInvoke
+#>
 Function Invoke-BHPathQuery{
-    [Alias('Invoke-BHQuery')]
+    [Alias('BHInvoke','Invoke-BHQuery')]
     Param(
-        [Parameter(Mandatory,ValueFromPipeline,ValueFromPipelineByPropertyName)][Alias('id')]$QueryID
+        [Parameter(Mandatory=1,ValueFromPipeline,ValueFromPipelineByPropertyName)][String]$Query,
+        [Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$Description,
+        [Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$Name,
+        [Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$ID,
+        [Parameter(Mandatory=0)][Switch]$Minimal,
+        [Parameter(Mandatory=0)][String]$Expand,
+        [Parameter(Mandatory=0)][String[]]$Select
         )
     Begin{}
-    Process{Foreach($ID in $QueryID){
-        $QObj = Get-BHPathQuery
+    Process{Foreach($CQ in $Query){
+        $QStart = [Datetime]::utcnow
+        $QRes   = if($CQ -match "\/?api\/"){BHAPI $CQ -expand Data}else{BHCypher $CQ -Minimal:$Minimal}
+        $QStop  = [Datetime]::utcnow
+        if($Expand){foreach($Field in ($Expand.split('.')-ne'Result')){
+            $QRes=$QRes.$field
+            }}
+        if($Select){$QRes = $QRes | Select-Object $Select}
+        $Obj = [PSCustomObject]@{}
+        if($ID){$Obj|Add-Member -MemberType NoteProperty -Name ID -Value $ID}
+        if($Name){$Obj|Add-Member -MemberType NoteProperty -Name Name -Value $Name}
+        if($Description){$Obj|Add-Member -MemberType NoteProperty -Name Description -Value $Description}
+        $Obj|Add-Member -MemberType NoteProperty -Name Query -Value $Query
+        $Obj|Add-Member -MemberType NoteProperty -Name Result -Value $QRes
+        $Obj|Add-Member -MemberType NoteProperty -Name Count -Value $QRes.Count
+        $Obj|Add-Member -MemberType NoteProperty -Name Timestamp -Value $QStart
+        $Obj|Add-Member -MemberType NoteProperty -Name Duration -Value $($QStop-$QStart)
+        if("result" -in ($Expand.split('.'))){$Obj|Select -Expand Result}else{$Obj}
         }}
     End{}
     }
