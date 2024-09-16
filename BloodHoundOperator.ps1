@@ -4631,7 +4631,7 @@ function Get-BHClientJob{
         #All     {BHAPI jobs?limit=10 -expand data}
         Finished{
             foreach($CliID in $ClientID){
-                [Array]$qFilter=@()
+                [Array]$qFilter=@('hydrate_ous=false','hydrate_domains=false')
                 if($Limit){$qFilter+="limit=$Limit"}
                 if($Status){$qFilter+="status=eq:$Status"}
                 if($CliID -AND $CliID -ne '*'){$qFilter+="client_id=eq:$CliID"}
