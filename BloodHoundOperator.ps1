@@ -1,8 +1,6 @@
 ## BloodHoundOperator
-# Wednesday, September 11, 2024 1:23:21 PM
+# Tuesday, September 17, 2024 10:07:49 AM
 
-
-#################################################### BHComposer
 ## BloodHound Operator - BHComposer (BHCE Only)
 # New-BHComposer
 # Invoke-BHComposer
@@ -4035,7 +4033,7 @@ function New-BHRRule{
     [Alias('BHRRule')]
     Param(
         [Parameter()][DateTime]$StartDate=[DateTime]::UTCNow,
-        [ValidateSet('HOURLY','DAILY','WEEKLY','MONTHLY')]
+        [ValidateSet('MINUTELY','HOURLY','DAILY','WEEKLY','MONTHLY')]
         [Parameter()][String]$Frequency='DAILY',
         [Parameter()][Int]$Interval=1,
         [Parameter()][Int]$Count
@@ -4343,7 +4341,7 @@ function Get-BHPathFinding{
     [CmdletBinding(DefaultParameterSetName='ListAll')]
     [Alias('BHFinding')]
     Param(
-        [Parameter(Mandatory=0,ParameterSetName='ListAll')][Switch]$TypeList,
+        [Parameter(Mandatory=0,ParameterSetName='ListAll')][Alias('ListAll')][Switch]$TypeList,
         [Parameter(Mandatory,ParameterSetName='Avail')][Switch]$ListAvail,
         [Parameter(Mandatory,ParameterSetName='Detail')][Switch]$Detail,
         [Parameter(Mandatory,ParameterSetName='Spark')][Switch]$Sparkline,
@@ -4354,23 +4352,27 @@ function Get-BHPathFinding{
         [Parameter(ParameterSetName='Avail',Mandatory,ValueFromPipeline,ValueFromPipelineByPropertyName=1,Position=0)][Alias('ID','objectid')][String[]]$DomainID,
         [Parameter(ParameterSetName='Spark')][Datetime]$StartDate,
         [Parameter(ParameterSetName='Spark')][Datetime]$EndDate,
+        [Parameter(ParameterSetName='Spark')]
         [Parameter(ParameterSetName='Detail')][Int]$Limit=$($BHSession|? x|select -last 1).limit
         )
     Begin{BHEOnly
         if($PSCmdlet.ParameterSetName -eq 'ListAll'){BHAPI api/v2/attack-path-types -expand data}
         }
-    Process{Foreach($DomID in $DomainID){Switch($PSCmdlet.ParameterSetName){
-                Avail {BHAPI api/v2/domains/$DomID/available-types -expand data}
-                Detail{if(-Not$FindingType){$FindingType=BHAPI api/v2/domains/$DomID/available-types -expand data}
-                    [Array]$qFilter=@()
+    Process{Foreach($DomID in $DomainID){
+        $FindType = if(-Not$FindingType){BHAPI api/v2/domains/$DomID/available-types -expand data}else{$FindingType}
+        Switch($PSCmdlet.ParameterSetName){
+                Avail {$FindType}
+                Detail{[Array]$qFilter=@()
                     if($Limit){$qFilter+="limit=$Limit"}
-                    Foreach($fType in $FindingType){BHAPI api/v2/domains/$DomID/details -filter "finding=$fType",$qFilter -expand data}
+                    Foreach($fType in $FindType){BHAPI api/v2/domains/$DomID/details -filter "finding=$fType",$qFilter -expand data}
                     }
-                Spark{if(-Not$FindingType){$FindingType=BHAPI api/v2/domains/$DomID/available-types -expand data}
-                    [Array]$qFilter=@()
+                Spark{[Array]$qFilter=@()
                     if($StartDate){$qFilter+="from=$($StartDate|ToBHDate)"}
                     if($EndDate){$qFilter+="to=$($EndDate|ToBHDate)"}
-                    Foreach($fType in $FindingType){BHAPI api/v2/domains/$DomID/sparkline -filter "finding=$fType",$qFilter -expand data}
+                    Foreach($fType in $FindType){
+                        $Out = BHAPI api/v2/domains/$DomID/sparkline -filter "finding=$fType",$qFilter -expand data
+                        if($Limit){$Out |Select -first $Limit}else{$Out}
+                        }
                     }
                 }}}
     End{}#######
@@ -4612,23 +4614,50 @@ function Start-BHClientJob{
     [BHE] Get BloodHound Client Job
 .DESCRIPTION
     Get BloodHound Client Finished Job
+    Job Status:
+    Invalid          =-1
+    Ready            = 0
+	Running          = 1
+	Complete         = 2
+	Canceled         = 3
+	TimedOut         = 4
+	Failed           = 5
+	Ingesting        = 6
+	Analyzing        = 7
+	PartialyComplete = 8
 .EXAMPLE
-    Get-BHClientJob
+    Get-BHClientJob [-status <status>] [-ClientID <client_id>]
+.EXAMPLE
+    BHJob -IncludeUnfinished [-Only]
+.EXAMPLE
+    BHJob -JobId 1234 [-log]
 #>
 function Get-BHClientJob{
-    #[CmdletBinding(DefaultParametersetName='All')]
+    [CmdletBinding(DefaultParameterSetName='Finished')]
     [Alias('BHJob')]
     Param(
-        #[Parameter(Mandatory=1,ParameterSetName='Finished')][Switch]$Finished,
+        [Parameter(Mandatory=0,ValueFromPipelineByPropertyName,ParameterSetName='Unfinished')]
         [Parameter(Mandatory=0,ValueFromPipelineByPropertyName,ParameterSetName='Finished')][Alias('id')][string[]]$ClientID="*",
+        [Parameter(Mandatory=0,ParameterSetName='Unfinished')]
         [Parameter(Mandatory=0,ParameterSetName='Finished')][int]$Status,
-        [Parameter(Mandatory=0,ParameterSetName='Finished')][Int]$Limit=10,
+        [Parameter(Mandatory=0,ParameterSetName='Finished')][Int]$Limit=$($BHSession|? x|select -last 1).limit,
+        [Parameter(Mandatory=1,ParameterSetName='Unfinished')][Alias('Unfinished')][Switch]$IncludeUnfinished,
+        [Parameter(Mandatory=0,ParameterSetName='Unfinished')][Switch]$Only,
         [Parameter(Mandatory=1,ParameterSetName='ID')][String]$JobID,
         [Parameter(Mandatory=0,ParameterSetName='ID')][Switch]$Logs
         )
     Begin{BHEOnly}
     process{Switch($PSCmdlet.ParameterSetName){
-        #All     {BHAPI jobs?limit=10 -expand data}
+        Unfinished{
+            foreach($CliID in $ClientID){
+                [Array]$qFilter=@('hydrate_ous=false','hydrate_domains=false')    
+                #if($Limit){$qFilter+="limit=$Limit"}
+                if($Status){$qFilter+="status=eq:$Status"}
+                if($CliID -AND $CliID -ne '*'){$qFilter+="client_id=eq:$CliID"}
+                $Jobz=BHAPI jobs -Filter $qFilter -expand data
+                if($Only){$Jobz|? status -in ('0','1','6','7')|Sort-Object execution_time -Descending}else{$Jobz|Sort-Object execution_time -Descending}
+                }
+            }
         Finished{
             foreach($CliID in $ClientID){
                 [Array]$qFilter=@('hydrate_ous=false','hydrate_domains=false')

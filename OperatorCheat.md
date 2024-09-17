@@ -2460,7 +2460,7 @@ Get-BHPathFinding [-DomainID] <string[]> -ListAvail
 
 Get-BHPathFinding [-DomainID] <string[]> -Detail [-FindingType <BHFindingType[]>] [-Limit <int>] 
 
-Get-BHPathFinding [-DomainID] <string[]> -Sparkline [-FindingType <BHFindingType[]>] [-StartDate <datetime>] [-EndDate <datetime>]
+Get-BHPathFinding [-DomainID] <string[]> -Sparkline [-FindingType <BHFindingType[]>] [-StartDate <datetime>] [-EndDate <datetime>] [-Limit <int>]
 ```
 
 #### **Examples:**
@@ -2955,6 +2955,8 @@ See `Help Set-BHClient` for more info
 ```PowerShell
 Get-BHClientJob [-ClientID <string[]>] [-Status <int>] [-Limit <int>] 
 
+Get-BHClientJob -IncludeUnfinished [-ClientID <string[]>] [-Status <int>] [-Only] 
+
 Get-BHClientJob -JobID <string> [-Logs]
 ```
 
@@ -2963,7 +2965,17 @@ Get-BHClientJob -JobID <string> [-Logs]
 ```PowerShell
 -------------------------- EXAMPLE 1 --------------------------
 
-PS > Get-BHClientJob
+Get-BHClientJob [-status <status>] [-ClientID <client_id>]
+
+
+-------------------------- EXAMPLE 2 --------------------------
+
+PS > BHJob -IncludeUnfinished [-Only]
+
+
+-------------------------- EXAMPLE 3 --------------------------
+
+PS > BHJob -JobId 1234 [-log]
 
 ```
 
@@ -3224,6 +3236,6 @@ See `Help Set-BHEvent` for more info
 
 </br>
 
-Wednesday, September 11, 2024 3:20:06 PM
+Tuesday, September 17, 2024 12:07:30 PM
 
 
