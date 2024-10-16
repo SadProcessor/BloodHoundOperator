@@ -1,5 +1,5 @@
 ## BloodHoundOperator
-# Tuesday, September 17, 2024 10:07:49 AM
+# Wednesday, October 16, 2024 3:07:03 AM
 
 ## BloodHound Operator - BHComposer (BHCE Only)
 # New-BHComposer
@@ -914,7 +914,9 @@ Function Get-BHServerConfig{
 .DESCRIPTION
     Set BloodHound Server Config
 .EXAMPLE
-    Set-BHConfig
+    Set-BHConfig -key prune.ttl -value @{base_ttl="P8D";has_session_edge_ttl="P5D"}
+.EXAMPLE
+    Set-BHConfig -key analysis.reconciliation -value @{enabled=$true}
 #>
 Function Set-BHServerConfig{
     [Alias('Set-BHConfig')]
@@ -1215,13 +1217,13 @@ Function Set-BHOperator{
         )
     Begin{NoMultiSession}
     Process{Foreach($ID in $OperatorID){
-        $Operator = Get-BHOperator -ID $ID -Verbose:$False
+        $Operator = Get-BHOperator -ID $OperatorID -Verbose:$False
         # Body
         $Body=@{
             principal     = if($Name){$Name}else{$Operator.principal_name}
             first_name    = if($FirstName){$FirstName}else{$Operator.first_name}
             last_name     = if($LastName){$LastName}else{$Operator.last_name}
-            email_address = if($Email){$Email}else{$Operator.email_address}
+            Email         = if($Email){$Email}else{$Operator.email_address}
             #roles         = if($Role.count){[Array]@($Role)}else{[Array]@($($Operator.roles.id))}
             roles         = @($Role)
             is_disabled   = $Operator.is_disabled
@@ -3049,7 +3051,7 @@ function Add-BHNodeToNodeGroup{
             sid = $NodeID
             action = 'add'
             }
-        BHAPI api/v2/asset-groups/$NodeGroupID/selectors PUT "[$(@($AddSelect)|ConvertTo-Json -Depth 11)]" -expand data.added_selectors
+        BHAPI api/v2/asset-groups/$NodeGroupID/selectors PUT "[$(@($AddSelect)|ConvertTo-Json -Depth 21)]" -expand data.added_selectors
         }}}
     End{if($Analyze){Start-BHDataAnalysis -verbose:$False}}
     }
@@ -3760,6 +3762,8 @@ Function Remove-BHPathQuery{
     Invoke-BHQuery "api/version"
 .EXAMPLE
     BHQuery -ID 123 | BHInvoke
+.EXAMPLE
+    "MATCH (x{objectid:'${oid}'}) RETURN x" | BHInvoke -Param @{oid='S-1-5-21-928081958-2569533466-1777930793-1800'}
 #>
 Function Invoke-BHPathQuery{
     [Alias('BHInvoke','Invoke-BHQuery')]
@@ -3768,14 +3772,20 @@ Function Invoke-BHPathQuery{
         [Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$Description,
         [Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$Name,
         [Parameter(Mandatory=0,ValueFromPipelineByPropertyName)][String]$ID,
+        [Parameter(Mandatory=0)][Hashtable]$Param,
         [Parameter(Mandatory=0)][Switch]$Minimal,
         [Parameter(Mandatory=0)][String]$Expand,
-        [Parameter(Mandatory=0)][String[]]$Select
+        [Parameter(Mandatory=0)][String[]]$Select,
+        [Parameter(Mandatory=0)][Switch]$Cypher
         )
     Begin{}
     Process{Foreach($CQ in $Query){
+        if($Param){Foreach($Key in $Param.keys){$CQ=$CQ.replace("`${$Key}",$Param.$Key)}}
         $QStart = [Datetime]::utcnow
-        $QRes   = if($CQ -match "\/?api\/"){BHAPI $CQ -expand Data}else{BHCypher $CQ -Minimal:$Minimal}
+        $QRes   = if($CQ -match "\/?api\/"){BHAPI $CQ -expand Data}else{
+            BHCypher $CQ -Minimal:$Minimal -Cypher:$Cypher
+            if($Cypher){RETURN $QRes}
+            }
         $QStop  = [Datetime]::utcnow
         if($Expand){foreach($Field in ($Expand.split('.')-ne'Result')){
             $QRes=$QRes.$field
@@ -3785,18 +3795,16 @@ Function Invoke-BHPathQuery{
         if($ID){$Obj|Add-Member -MemberType NoteProperty -Name ID -Value $ID}
         if($Name){$Obj|Add-Member -MemberType NoteProperty -Name Name -Value $Name}
         if($Description){$Obj|Add-Member -MemberType NoteProperty -Name Description -Value $Description}
-        $Obj|Add-Member -MemberType NoteProperty -Name Query -Value $Query
+        $Obj|Add-Member -MemberType NoteProperty -Name Query -Value $CQ
         $Obj|Add-Member -MemberType NoteProperty -Name Result -Value $QRes
-        $Obj|Add-Member -MemberType NoteProperty -Name Count -Value $QRes.Count
+        $Obj|Add-Member -MemberType NoteProperty -Name Count -Value $(if($Qres.SourceType -AND $QRes.Step){$Qres[-1].id+1}else{$QRes.Count})
         $Obj|Add-Member -MemberType NoteProperty -Name Timestamp -Value $QStart
         $Obj|Add-Member -MemberType NoteProperty -Name Duration -Value $($QStop-$QStart)
         if("result" -in ($Expand.split('.'))){$Obj|Select -Expand Result}else{$Obj}
         }}
     End{}
     }
-#>
-
-
+#End
 
 
 #EOF
@@ -4284,6 +4292,17 @@ enum BHFindingType{
     }
 #End
 
+enum BHJobStatus{
+    Ready
+	Running
+	Complete
+	Canceled
+	TimedOut
+	Failed
+	Ingesting
+	Analyzing
+	PartialyComplete
+}
 
 # BHEOnly ################################################ BHOperatorEULA
 
@@ -4379,6 +4398,49 @@ function Get-BHPathFinding{
     }
 #End
 
+
+function Get-BHPathFindingInfo{
+    [Alias('BHFindingInfo')]
+    Param(
+        [Parameter(ValueFromPipeline=1)][BHFindingType[]]$FindingType,
+        [Parameter()][Switch]$Full,
+        [Parameter()][Alias('md')][Switch]$OutMarkDown
+        )
+    Begin{BHEOnly}
+    Process{foreach($Ftype in "$FindingType"){
+        $FDoc = [PSCustomObject]@{
+            Finding = $FType
+            Title   = BHAPI "api/v2/assets/findings/$Ftype/title.md"
+            Type   = BHAPI "api/v2/assets/findings/$Ftype/type.md"
+            Description = BHAPI "api/v2/assets/findings/$Ftype/short_description.md"
+            Remediation = BHAPI "api/v2/assets/findings/$Ftype/short_remediation.md"
+            References   = BHAPI "api/v2/assets/findings/$Ftype/references.md"
+            }
+        if($Full){
+            $fDesc = BHAPI "api/v2/assets/findings/$Ftype/long_description.md"
+            $fRem  = BHAPI "api/v2/assets/findings/$Ftype/long_remediation.md"
+            $FDoc | Add-Member -MemberType NoteProperty -Name Description_Full -Value $FDesc
+            $FDoc | Add-Member -MemberType NoteProperty -Name Remediation_Full -Value $FRem
+            }
+        if($OutMarkDown){"# $($FDoc.Title.trim())
+**$($FDoc.Type.trim()) - $FType**
+
+## Description
+$(if($Full){$FDoc.Description_Full.split("`r`n").replace("##",'###')}else{$FDoc.Description})
+
+## Remediation
+$(if($Full){$FDoc.Remediation_Full.split("`r`n").replace("##",'###')}else{$FDoc.Remediation})
+
+## References
+$($FDoc.References)
+`r`n</br>`r`n
+---"}
+        else{$FDoc}
+        }}
+    End{}
+    }
+#End
+
 <#
 .Synopsis
     [BHE] Approve BloodHound Path Finding
@@ -4393,7 +4455,7 @@ function Approve-BHPathFinding{
         [Parameter(Mandatory,ValueFromPipelineByPropertyName)][Alias('PathID')][Int[]]$ID,
         [Parameter(Mandatory,ValueFromPipelineByPropertyName)][Alias('finding')][BHFindingType]$FindingType,
         [Parameter(Mandatory)][Bool]$Accepted,
-        [Parameter()][DateTime]$Until,
+        [Parameter()][DateTime]$Until=$([DateTime]::utcnow.AddDays(30)),
         [Parameter()][Switch]$Force,
         [Parameter()][Switch]$PassThru
         )
@@ -4403,7 +4465,7 @@ function Approve-BHPathFinding{
         $Accept = @{
             risk_type    = "$FindingType"
             accepted     = $Accepted
-            accept_until = if($Until){$Until|ToBHDate}
+            accept_until = if($Until -AND $Accepted){$Until|ToBHDate}
             } | Convertto-Json
         $Out = BHAPI api/v2/attack-paths/$PathID/acceptance PUT $Accept -expand data
         if($PassThru){$Out}
@@ -4654,8 +4716,8 @@ function Get-BHClientJob{
                 #if($Limit){$qFilter+="limit=$Limit"}
                 if($Status){$qFilter+="status=eq:$Status"}
                 if($CliID -AND $CliID -ne '*'){$qFilter+="client_id=eq:$CliID"}
-                $Jobz=BHAPI jobs -Filter $qFilter -expand data
-                if($Only){$Jobz|? status -in ('0','1','6','7')|Sort-Object execution_time -Descending}else{$Jobz|Sort-Object execution_time -Descending}
+                $Jobz=BHAPI jobs -Filter $qFilter -expand data |%{$_|Add-member -MemberType NoteProperty -Name status -Value ($_.status -as [BHJobStatus]) -force -PassThru}
+                if($Only){$Jobz|? status -in ('Ready','Running','Canceled','TimedOut','Failed') |Sort-Object execution_time -Descending}else{$Jobz|Sort-Object execution_time -Descending}
                 }
             }
         Finished{
@@ -4664,7 +4726,7 @@ function Get-BHClientJob{
                 if($Limit){$qFilter+="limit=$Limit"}
                 if($Status){$qFilter+="status=eq:$Status"}
                 if($CliID -AND $CliID -ne '*'){$qFilter+="client_id=eq:$CliID"}
-                BHAPI jobs/finished -Filter $qFilter -expand data
+                BHAPI jobs/finished -Filter $qFilter -expand data |%{$_|Add-member -MemberType NoteProperty -Name status -Value ($_.status -as [BHJobStatus]) -force -PassThru}
                 }
             }
         ID{if($Logs){BHAPI jobs/$JobID/log}else{BHAPI jobs/$JobID -expand data}}

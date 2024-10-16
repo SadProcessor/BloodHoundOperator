@@ -73,6 +73,7 @@
     - [Approve-BHPathFinding](#approve-bhpathfinding)
     - [Get-BHPathFinding](#get-bhpathfinding)
     - [Start-BHPathFinding](#start-bhpathfinding)
+    - [Get-BHPathFindingInfo](#get-bhpathfindinginfo)
     - [Get-BHPathQuery](#get-bhpathquery)
     - [Invoke-BHPathQuery](#invoke-bhpathquery)
     - [New-BHPathQuery](#new-bhpathquery)
@@ -673,7 +674,12 @@ Set-BHServerConfig [-ConfigKey] <string[]> [-Value] <hashtable>
 ```PowerShell
 -------------------------- EXAMPLE 1 --------------------------
 
-PS > Set-BHConfig
+PS > Set-BHConfig -key prune.ttl -value @{base_ttl="P8D";has_session_edge_ttl="P5D"}
+
+
+-------------------------- EXAMPLE 2 --------------------------
+
+PS > Set-BHConfig -key analysis.reconciliation -value @{enabled=$true}
 
 ```
 
@@ -2531,6 +2537,41 @@ See `Help BHPathAnalysis` for more info
 
 ---
 
+### **Get-BHPathFindingInfo**
+
+**Alias**: `BHFindingInfo`
+
+
+Get-BHPathFindingInfo [[-FindingType] <BHFindingType[]>] [-Full] [-OutMarkDown] [<CommonParameters>]
+
+
+#### **Syntax:**
+
+```PowerShell
+Get-BHPathFindingInfo [[-FindingType] <BHFindingType[]>] [-Full] [-OutMarkDown]
+```
+
+#### **Examples:**
+
+```PowerShell
+-------------------------- EXAMPLE 1
+
+```
+
+See `Help BHFindingInfo` for more info
+
+</br>
+
+</br>
+
+
+[BackToTop](#table-of-content)
+
+
+</br>
+
+---
+
 ### **Get-BHPathQuery**
 
 **Alias**: `BHQuery`
@@ -2601,7 +2642,7 @@ Invoke BloodHound Query
 #### **Syntax:**
 
 ```PowerShell
-Invoke-BHPathQuery [-Query] <string> [[-Description] <string>] [[-Name] <string>] [[-ID] <string>] [[-Expand] <string>] [[-Select] <string[]>] [-Minimal]
+Invoke-BHPathQuery [-Query] <string> [[-Description] <string>] [[-Name] <string>] [[-ID] <string>] [[-Param] <hashtable>] [[-Expand] <string>] [[-Select] <string[]>] [-Minimal] [-Cypher]
 ```
 
 #### **Examples:**
@@ -2620,6 +2661,11 @@ PS > Invoke-BHQuery "api/version"
 -------------------------- EXAMPLE 3 --------------------------
 
 PS > BHQuery -ID 123 | BHInvoke
+
+
+-------------------------- EXAMPLE 4 --------------------------
+
+PS > "MATCH (x{objectid:'${oid}'}) RETURN x" | BHInvoke -Param @{oid='S-1-5-21-928081958-2569533466-1777930793-1800'}
 
 ```
 
@@ -3236,6 +3282,6 @@ See `Help Set-BHEvent` for more info
 
 </br>
 
-Tuesday, September 17, 2024 12:07:30 PM
+Wednesday, October 16, 2024 5:06:55 AM
 
 
