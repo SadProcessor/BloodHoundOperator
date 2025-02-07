@@ -4992,11 +4992,26 @@ function Get-BHDataPosture{
                 $qFilter+="limit=$Limit"
                 BHAPI api/v2/posture-stats -filter $qFilter,"domain_sid=eq:$DomID" -expand data
                 }
-            Exposure{BHAPI api/v2/domains/$DomID/posture-history/exposure -Filter $qfilter -expand data}
-            Finding {BHAPI api/v2/domains/$DomID/posture-history/findings -Filter $qfilter -expand data}
-            Asset   {BHAPI api/v2/domains/$DomID/posture-history/assets -Filter $qfilter -expand data}
-            Group   {BHAPI api/v2/domains/$DomID/posture-history/group_completeness -Filter $qfilter -expand data}
-            Session {BHAPI api/v2/domains/$DomID/posture-history/session_completeness -Filter $qfilter -expand data}
+            Exposure{
+                $qFilter+="environments=$DomID"
+                BHAPI api/v2/posture-history/exposure -Filter $qfilter -expand data
+                }
+            Finding {
+                $qFilter+="environments=$DomID"
+                BHAPI api/v2/posture-history/findings -Filter $qfilter -expand data
+                }
+            Asset   {
+                $qFilter+="environments=$DomID"
+                BHAPI api/v2/posture-history/assets -Filter $qfilter -expand data
+                }
+            Group   {
+                $qFilter+="environments=$DomID"
+                BHAPI api/v2/posture-history/group-completeness -Filter $qfilter -expand data
+                }
+            Session {
+                $qFilter+="environments=$DomID"
+                BHAPI api/v2/posture-history/session_completeness -Filter $qfilter -expand data
+            }
             }}}
     End{}###
     }
