@@ -3726,8 +3726,9 @@ function Get-BHPath{
         [Parameter(Mandatory=0)][Switch]$Cypher,
         [Parameter(Mandatory=0)][Switch]$NoConvert,
         [Parameter(Mandatory=0)][Switch]$Minimal,
-        [Parameter(Mandatory=0)][Alias('dot')][String]$Expand
-        )
+        [Parameter(Mandatory=0)][Alias('dot')][String]$Expand,
+        [Parameter(Mandatory=0)][Alias('Prefer')][int]$Timeout
+)
     Process{
     # Source / Target
     if($Source -AND $Source -notmatch "^\{"){if($Source -notmatch "^\:"){$Source=":$Source"}}
@@ -3762,7 +3763,7 @@ RETURN $Return$(if($OrderBy){"`r`nORDER BY $OrderBy"})$(if($Limit){"`r`nLIMIT $L
     Write-Verbose "[BH] POST api/v2/graphs/cypher
 $($CypherQ.trim())"
     $Body = @{query=$CypherQ;include_properties=$(-Not$Minimal)}|ConvertTo-Json
-    $QData = Invoke-BHAPI 'api/v2/graphs/cypher' -Method POST -Body $Body -expand $(if($NoConvert){$Expand}else{'data'}) -verbose:$False
+    $QData = Invoke-BHAPI 'api/v2/graphs/cypher' -Method POST -Body $Body -expand $(if($NoConvert){$Expand}else{'data'}) -verbose:$False -Timeout:$Timeout
     #$QData = BHPath -Query $CypherQ.trim() -Verbose:$false
     #if(-Not$shortest -AND -Not$All){$QData.edges=$QData.Edges|Sort-Object {"$($_.sourceS)-$($_.Target)"} -unique}
     ## NoConvert
