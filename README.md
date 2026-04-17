@@ -37,7 +37,7 @@ New-BHSession -TokenID $BHTokenID -Token $BHTokenKey
 Create BHSession (BHE)
 ```PowerShell
 # Create Session - BHE
-New-BHSession -Server test.bloodhoundenterprise.io -TokenID $BHETokenID -Token $BHETokenKey
+New-BHSession -Server test.bloodhoundenterprise.io -TokenID $BHTokenID -Token $BHTokenKey
 ```
 
 Check Session Object
