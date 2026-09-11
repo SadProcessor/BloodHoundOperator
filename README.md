@@ -15,7 +15,7 @@ Create an API token ID/Key pair from the BloodHound browser UI - in [Working wit
 - Create a non-personal API key/ID pair
 - Create a personal API Key/ID pair
 
-Copy the generated TokenID to your clipbard, then load to variable
+Copy the generated TokenID to your clipboard, then load to variable
 ```PowerShell
 # Get id from clipboard
 $BHTokenID = Get-Clipboard
